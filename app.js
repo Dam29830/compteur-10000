@@ -22,7 +22,7 @@
   var bandeau = document.getElementById('bandeau');
   var REDUIT = !!(window.matchMedia && window.matchMedia('(prefers-reduced-motion: reduce)').matches);
   var fmt = R.fmt;
-  var VERSION = '4';
+  var VERSION = '5';
 
   var BASE = typeof CONFIG.base === 'string' ? CONFIG.base.trim().replace(/\/+$/, '') : '';
   var BASE_OK = /^https:\/\/[a-z0-9-]+(\.[a-z0-9-]+)*\.(firebasedatabase\.app|firebaseio\.com)$/i.test(BASE);
@@ -103,6 +103,7 @@
     vus: null,
     finVue: undefined,     // fin de partie déjà annoncée (victoire ou clôture)
     statutVu: null,        // en_cours, pause, close : pour prévenir des changements
+    monStatut: null,       // pause/reprise/clôture demandée ici, pas encore confirmée
     partieVue: null,
     resumes: {},           // accueil : état des parties récentes
     affiches: {},
@@ -283,9 +284,32 @@
       throw erreur('Enregistrement impossible : ' + ((e && e.message) || e) + '. Recharge la page.', 'firebase');
     }
     if (!opts.silencieux) {
-      p.ecriture.catch(function (e) { toast(messageFirebase(e, opts.nouveau), { erreur: true, duree: 12000 }); });
+      p.ecriture.catch(function (e) {
+        // Refusé : Firebase a déjà remis la partie comme avant ; on retire les messages devenus faux.
+        if (opts.nouveau) zoneToasts.innerHTML = '';
+        toast(messageFirebase(e, opts.nouveau), { erreur: true, duree: 12000 });
+      });
     }
     return p;
+  }
+
+  /**
+   * Pause, reprise ou clôture. On retient le changement demandé ici tant que Firebase
+   * ne l'a pas confirmé : s'il est refusé, le retour en arrière ne s'annonce pas.
+   */
+  function publierStatut(type, vers) {
+    var suivi = { de: S.a.statut, vers: vers };
+    S.monStatut = suivi;
+    var p;
+    try {
+      p = publier({ type: type }, { nouveau: true });
+    } catch (e) {
+      S.monStatut = null;
+      throw e;
+    }
+    function fin() { if (S.monStatut === suivi) S.monStatut = null; }
+    p.ecriture.then(fin, fin);
+    return Promise.resolve({});
   }
 
   function avecDelai(promesse, ms) {
@@ -418,16 +442,13 @@
       case 'pause':
         if (S.a.pause) return Promise.resolve({});
         if (S.a.fini) return Promise.reject(erreur('La partie est terminée.', 'fin'));
-        publier({ type: 'pause' }, { nouveau: true });
-        return Promise.resolve({});
+        return publierStatut('pause', 'pause');
       case 'reprise':
         if (!S.a.pause && S.a.statut !== 'close') return Promise.resolve({});
-        publier({ type: 'reprise' }, { nouveau: true });
-        return Promise.resolve({});
+        return publierStatut('reprise', 'en_cours');
       case 'cloture':
         if (S.a.fini) return Promise.reject(erreur('La partie est déjà terminée.', 'fin'));
-        publier({ type: 'cloture' }, { nouveau: true });
-        return Promise.resolve({});
+        return publierStatut('cloture', 'close');
       case 'effacer':
         publier({ type: 'effacer' }, { nouveau: true });
         return Promise.resolve({});
@@ -539,6 +560,10 @@
     var ancienStatut = S.statutVu;
     S.statutVu = etat.statut;
     var changement = !premier && !nouvellePartie && ancienStatut && ancienStatut !== etat.statut;
+    var m = S.monStatut;
+    if (changement && m && m.de === etat.statut && m.vers === ancienStatut) {
+      changement = false;   // notre demande vient d'être refusée par Firebase : rien à annoncer
+    }
 
     rendre(nouveaux);
 
