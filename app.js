@@ -21,6 +21,7 @@
   var bandeau = document.getElementById('bandeau');
   var REDUIT = !!(window.matchMedia && window.matchMedia('(prefers-reduced-motion: reduce)').matches);
   var fmt = R.fmt;
+  var VERSION = '3';
 
   var BASE = typeof CONFIG.base === 'string' ? CONFIG.base.trim().replace(/\/+$/, '') : '';
   var BASE_OK = /^https:\/\/[a-z0-9-]+(\.[a-z0-9-]+)*\.(firebasedatabase\.app|firebaseio\.com)$/i.test(BASE);
@@ -206,22 +207,11 @@
 
   // --- Firebase ------------------------------------------------------------------
 
-  var db = null;
-  var refJournal = null;
+  // Accès à la base (base.js, chargé au démarrage). Aucune variable globale.
+  var base = null;
 
-  function demarrerFirebase() {
-    if (!window.firebase || typeof window.firebase.initializeApp !== 'function') return false;
-    try {
-      if (!window.firebase.apps || !window.firebase.apps.length) window.firebase.initializeApp({ databaseURL: BASE });
-      db = window.firebase.database();
-      return true;
-    } catch (e) {
-      return false;
-    }
-  }
-
-  function refPartie(code) {
-    return db.ref('parties/' + code + '/evenements');
+  function cheminPartie(code) {
+    return 'parties/' + code + '/evenements';
   }
 
   function erreur(message, code, res) {
@@ -240,25 +230,32 @@
   }
 
   function ecouter() {
-    refJournal = refPartie(CODE);
-    refJournal.on('value', function (instantane) {
-      recevoir(R.plier(instantane.val()));
+    base.ecouter(cheminPartie(CODE), function (valeur) {
+      recevoir(R.plier(valeur));
     }, function (e) {
       S.fatal = { titre: 'Lecture impossible', texte: messageFirebase(e) };
       rendre();
     });
-    db.ref('.info/connected').on('value', function (s) { marquerConnexion(s.val() === true); });
+    base.connexion(marquerConnexion);
   }
 
-  /** Ajoute un événement au journal. L'écran se met à jour tout de suite. */
+  /**
+   * Ajoute un événement au journal. L'écran se met à jour tout de suite.
+   * Une erreur lève une exception avec un message lisible (rattrapée par envoyer).
+   */
   function publier(evenement, silencieux) {
-    evenement.t = window.firebase.database.ServerValue.TIMESTAMP;
-    var ref = refJournal.push(evenement);
-    var ecriture = Promise.resolve(ref).then(function () { return ref.key; });
-    if (!silencieux) {
-      ecriture.catch(function (e) { toast(messageFirebase(e), { erreur: true, duree: 9000 }); });
+    if (!base) throw erreur('Le compteur se charge encore, réessaie dans un instant.', 'attente');
+    evenement.t = base.horodatage();
+    var p;
+    try {
+      p = base.ajouter(cheminPartie(CODE), evenement);
+    } catch (e) {
+      throw erreur('Enregistrement impossible : ' + ((e && e.message) || e) + '. Recharge la page.', 'firebase');
     }
-    return { cle: ref.key, ecriture: ecriture };
+    if (!silencieux) {
+      p.ecriture.catch(function (e) { toast(messageFirebase(e), { erreur: true, duree: 9000 }); });
+    }
+    return p;
   }
 
   // Attendre qu'un événement publié soit pris en compte (pour savoir si un prénom est accepté).
@@ -298,10 +295,18 @@
     return trouve;
   }
 
-  /** Les actions de l'appli, traduites en événements du journal. */
+  /** Les actions de l'appli, traduites en événements du journal. Ne lève jamais d'exception. */
   function envoyer(type, d) {
+    try {
+      return envoyerSansFilet(type, d);
+    } catch (e) {
+      return Promise.reject(e && e.code ? e : erreur('Problème technique : ' + ((e && e.message) || e) + '. Recharge la page.', 'technique'));
+    }
+  }
+
+  function envoyerSansFilet(type, d) {
     d = d || {};
-    if (!S.etat || !refJournal) return Promise.reject(erreur('La partie n’est pas encore chargée.', 'attente'));
+    if (!S.etat || !base) return Promise.reject(erreur('La partie n’est pas encore chargée.', 'attente'));
     var p;
     switch (type) {
       case 'rejoindre': {
@@ -371,6 +376,7 @@
   /** Crée une partie avec un code libre, puis ouvre son écran de partie. */
   function creerPartie() {
     if (S.creation) return;
+    if (!base) { toast('Le compteur se charge encore, réessaie dans un instant.'); return; }
     S.creation = true;
     rendre();
     var essais = 0;
@@ -381,14 +387,14 @@
     }
     function essayer() {
       var code = genererCode();
-      return delai(refPartie(code).limitToFirst(1).once('value')).then(function (instantane) {
-        if (instantane.exists()) {
+      return delai(base.existe(cheminPartie(code))).then(function (existe) {
+        if (existe) {
           essais++;
           if (essais > 6) throw erreur('Aucun code libre trouvé, réessaie.', 'code');
           return essayer();
         }
-        var ref = refPartie(code).push({ type: 'creation', t: window.firebase.database.ServerValue.TIMESTAMP });
-        return delai(Promise.resolve(ref)).then(function () { return code; });
+        var p = base.ajouter(cheminPartie(code), { type: 'creation', t: base.horodatage() });
+        return delai(p.ecriture).then(function () { return code; });
       });
     }
     essayer().then(function (code) {
@@ -1556,8 +1562,8 @@
   var cacheDepuis = 0;
   document.addEventListener('visibilitychange', function () {
     if (document.visibilityState === 'hidden') { cacheDepuis = Date.now(); return; }
-    if (db && cacheDepuis && Date.now() - cacheDepuis > 4000) {
-      try { db.goOffline(); db.goOnline(); } catch (e) { /* rien */ }
+    if (base && cacheDepuis && Date.now() - cacheDepuis > 4000) {
+      try { base.relancer(); } catch (e) { /* rien */ }
     }
     cacheDepuis = 0;
     reveil();
@@ -1587,16 +1593,19 @@
 
   function demarrer() {
     if (!BASE_OK) { rendre(); return; }
-    if (!demarrerFirebase()) {
+    rendre();
+    var chargement = import('./base.js?v=' + VERSION).then(function (module) {
+      base = module.ouvrirBase(BASE);
+      rendre();
+      if (CODE) ecouter();
+    });
+    chargement.catch(function () {
       S.fatal = {
         titre: 'Chargement impossible',
-        texte: 'Le compteur n’a pas pu se charger. Vérifie que ce téléphone est connecté à internet, puis réessaie.'
+        texte: 'Le compteur n’a pas pu se charger. Vérifie que cet appareil est connecté à internet, puis réessaie.'
       };
       rendre();
-      return;
-    }
-    rendre();
-    if (CODE) ecouter();
+    });
   }
 
   demarrer();
