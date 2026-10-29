@@ -40,6 +40,15 @@
   --toast-fond: #13201B;
   --toast-texte: #F1F4F2;
   --toast-action: #8FE3C3;
+  /* Ma carte : bleu pastel (comme Absolut'Beauté) ; « reste » en rouge gloss */
+  --fiche: #2B4C78;
+  --fiche-fonce: #1E3859;
+  --fiche-pause: #4A5A70;
+  --gloss-haut: #EE4D68;
+  --gloss: #D91F44;
+  --gloss-bas: #B8102F;
+  --moi-bleu: #E7EEF7;         /* ma ligne dans le classement */
+  --toi-texte: #2B4C78;
 
   /* Couleurs des joueurs (initiale blanche) */
   --j0: #2F5FD0; --j1: #CF611B; --j2: #7445C9; --j3: #0E857A; --j4: #C2386F;
@@ -101,6 +110,8 @@
     --toast-fond: #E6EEEA;
     --toast-texte: #0B1310;
     --toast-action: #0D6B54;
+    --moi-bleu: #1A283C;
+    --toi-texte: #A9C4EC;
     color-scheme: dark;
   }
 }
@@ -305,10 +316,36 @@ svg { flex: none; }
   display: flex; flex-direction: column; gap: 10px;
   padding: 18px 20px 14px;
   border-radius: var(--r-l);
-  background: var(--tapis); color: var(--sur-tapis);
+  background: var(--fiche); color: var(--sur-tapis);
   box-shadow: var(--ombre);
   isolation: isolate;
 }
+/* Dés en filigrane dans le fond de la carte */
+.fiche-des { position: absolute; inset: 0; z-index: -1; pointer-events: none; overflow: hidden; }
+.de-fond { position: absolute; }
+.fiche-des .face { fill: rgb(255 255 255 / .09); stroke: rgb(255 255 255 / .26); stroke-width: 1.5; vector-effect: non-scaling-stroke; }
+.fiche-des .point { fill: rgb(255 255 255 / .28); }
+.de-fond-a { width: 168px; height: 168px; right: -44px; top: -34px; transform: rotate(17deg); }
+.de-fond-b { width: 84px; height: 84px; right: -12px; top: 116px; transform: rotate(-14deg); }
+.de-fond-c { width: 76px; height: 76px; left: -20px; bottom: -18px; transform: rotate(26deg); }
+/* « Reste … pour atteindre 10 000 » : rouge brillant, comme un baume à lèvres repulpant */
+.fiche-reste {
+  position: relative; overflow: hidden;
+  display: inline-block; max-width: 100%;
+  padding: 6px 13px 7px; border-radius: 12px;
+  background: linear-gradient(180deg, var(--gloss-haut) 0%, var(--gloss) 50%, var(--gloss-bas) 100%);
+  color: #FFFFFF; font-weight: 700;
+  font-size: clamp(.875rem, 3.85vw, 1.0625rem); line-height: 1.3;
+  text-shadow: 0 1px 1px rgb(110 0 20 / .35);
+  box-shadow: inset 0 1px 0 rgb(255 255 255 / .4), 0 3px 10px rgb(184 16 47 / .35);
+}
+.fiche-reste::after {   /* le reflet du « gloss » */
+  content: ""; position: absolute; left: 6px; right: 6px; top: 2px; height: 46%;
+  border-radius: 10px 10px 40% 40% / 10px 10px 100% 100%; pointer-events: none;
+  background: linear-gradient(180deg, rgb(255 255 255 / .38), rgb(255 255 255 / 0));
+}
+.fiche-moi .fiche-statut .fiche-reste strong { color: #FFFFFF; }
+.fiche-moi .bouton-de { color: var(--fiche-fonce); }
 .fiche-moi::before {
   content: ""; position: absolute; inset: 0; z-index: -1; pointer-events: none;
   background:
@@ -355,7 +392,7 @@ svg { flex: none; }
 }
 .ligne-joueur { position: relative; border-top: 1px solid var(--trait); }
 .ligne-joueur:first-child { border-top: 0; }
-.ligne-joueur.moi { background: var(--moi-fond); }
+.ligne-joueur.moi { background: var(--moi-bleu); }
 .ligne-joueur.eclair::after {
   content: ""; position: absolute; inset: 0; pointer-events: none;
   background: var(--eclair);
@@ -378,7 +415,7 @@ svg { flex: none; }
   display: inline-block; vertical-align: 2px;
   padding: 2px 7px; border-radius: 6px;
   font: 700 var(--t-xs)/1.3 var(--f-texte); letter-spacing: .05em; text-transform: uppercase;
-  background: var(--carte); color: var(--vert-texte);
+  background: var(--carte); color: var(--toi-texte);
 }
 .etat { display: flex; flex-wrap: wrap; align-items: center; gap: 2px 6px; font-size: var(--t-s); color: var(--gris); }
 .a-jouer { color: var(--ambre); font-weight: 700; }
@@ -820,7 +857,7 @@ html.modale-ouverte .toasts { bottom: auto; top: calc(12px + env(safe-area-inset
 .bouton-oublier:active { color: var(--pip); }
 
 /* Ma fiche quand la partie est en pause */
-.fiche-pause { background: #3E5149; }
+.fiche-pause { background: var(--fiche-pause); }
 .fiche-pause .fiche-statut { color: var(--sur-tapis); font-weight: 700; }
 
 .code-partie { margin: 0; color: var(--sur-tapis-doux); font-weight: 700; }

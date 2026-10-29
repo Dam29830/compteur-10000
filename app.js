@@ -22,7 +22,7 @@
   var bandeau = document.getElementById('bandeau');
   var REDUIT = !!(window.matchMedia && window.matchMedia('(prefers-reduced-motion: reduce)').matches);
   var fmt = R.fmt;
-  var VERSION = '5';
+  var VERSION = '6';
 
   var BASE = typeof CONFIG.base === 'string' ? CONFIG.base.trim().replace(/\/+$/, '') : '';
   var BASE_OK = /^https:\/\/[a-z0-9-]+(\.[a-z0-9-]+)*\.(firebasedatabase\.app|firebaseio\.com)$/i.test(BASE);
@@ -950,7 +950,8 @@
     } else if (!f.ouvert) {
       statut = 'Pour entrer dans la partie : <strong class="num">' + fmt(R.seuilEntree(r)) + '</strong> points en un tour';
     } else {
-      statut = 'Reste <strong class="num">' + fmt(Math.max(0, r.objectif - f.total)) + '</strong> pour atteindre ' + fmt(r.objectif);
+      // En rouge « gloss », comme un baume à lèvres repulpant.
+      statut = '<span class="fiche-reste">Reste <strong class="num">' + fmt(Math.max(0, r.objectif - f.total)) + '</strong> pour atteindre ' + fmt(r.objectif) + '</span>';
     }
     var alerteCroix = '';
     if (!fini && r.troisCroix && f.croix > 0) {
@@ -972,6 +973,8 @@
     else if (a.pause) action = '<button class="bouton bouton-de bouton-large" data-action="reprendre">' + I.lecture + '<span>Reprendre la partie</span></button>';
     else action = '<button class="bouton bouton-de bouton-large" data-action="saisir">Noter mon tour</button>';
     return '<section class="fiche-moi' + (fini && a.vainqueur === f ? ' fiche-gagnante' : '') + (a.pause ? ' fiche-pause' : '') + '" aria-labelledby="nom-moi">' +
+      // Des dés en fond de la carte, en filigrane pour que tout reste lisible.
+      '<span class="fiche-des" aria-hidden="true">' + de(5, 'de-fond de-fond-a') + de(6, 'de-fond de-fond-b') + de(3, 'de-fond de-fond-c') + '</span>' +
       '<div class="fiche-entete">' + avatar(f, 'avatar-clair') + '<h1 id="nom-moi" class="fiche-nom">' + esc(f.nom) + '</h1>' + rang + '</div>' +
       '<p class="fiche-total num" data-total="' + esc(f.id) + '" data-ctx="moi" aria-label="Ton total : ' + fmt(f.total) + ' points">' + fmt(f.total) + '</p>' +
       '<p class="fiche-statut">' + statut + '</p>' + alerteCroix +
