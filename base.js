@@ -36,6 +36,11 @@ export function ouvrirBase(adresse) {
       return get(query(ref(db, chemin), limitToFirst(1))).then((instantane) => instantane.exists());
     },
 
+    /** Lit une fois ce qui se trouve à ce chemin (null s'il n'y a rien). */
+    lire(chemin) {
+      return get(ref(db, chemin)).then((instantane) => instantane.val());
+    },
+
     /** Heure du serveur, remplie par Firebase au moment de l'enregistrement. */
     horodatage() {
       return serverTimestamp();

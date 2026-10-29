@@ -188,16 +188,26 @@ svg { flex: none; }
   white-space: nowrap;
 }
 .pastille-fin { background: var(--or-fond); border-color: transparent; color: var(--or-texte); }
+.pastille-pause {
+  display: inline-flex; align-items: center; gap: 5px;
+  background: var(--ambre-fond); border-color: transparent; color: var(--ambre);
+}
+.pastille svg { width: 1em; height: 1em; }
 .barre-actions, .actions-ecran { margin-left: auto; display: flex; gap: 6px; }
+/* Boutons du haut : toujours une icône ET son nom écrit. */
 .bouton-barre {
   display: inline-flex; align-items: center; justify-content: center; gap: 8px;
-  min-width: 44px; min-height: 44px; padding: 8px 12px;
+  min-width: 44px; min-height: 44px; padding: 8px 14px;
   border-radius: 12px; border: 1px solid var(--trait);
   background: var(--carte); color: var(--encre);
-  font: 700 var(--t-s)/1 var(--f-texte);
+  font: 700 var(--t-s)/1.1 var(--f-texte);
+  white-space: nowrap;
 }
 .bouton-barre svg { width: 22px; height: 22px; }
 .bouton-barre:hover { border-color: var(--trait-fort); }
+.bouton-barre .bb-court { display: none; }
+.bouton-barre-accent { background: var(--tapis); border-color: var(--tapis); color: #FFFFFF; }
+.bouton-barre-accent:hover { border-color: var(--tapis); }
 
 /* --- Boutons, liens, champs --------------------------------------------------- */
 
@@ -488,11 +498,32 @@ html.mode-ecran { font-size: clamp(15px, calc(.6rem + .55vw), 24px); }
   .ecran, .ecran-attente { grid-template-columns: minmax(0, 1fr); }
   .rejoindre { position: static; }
   .rejoindre .qr-cadre:not(.qr-petit) { max-width: 18rem; }
-  .actions-ecran .bouton-barre-texte {
-    position: absolute; width: 1px; height: 1px; overflow: hidden;
-    clip: rect(0 0 0 0); clip-path: inset(50%); white-space: nowrap;
-  }
   .attente { min-height: 0; }
+  .barre-ecran .infos-partie .note { display: none; }
+}
+
+/* Bandeau d'état de la partie : en pause, terminée */
+.etat-partie {
+  display: grid; grid-template-columns: auto minmax(0, 1fr) auto; align-items: center; gap: 1rem;
+  padding: 1rem 1.25rem; border-radius: var(--r-l);
+  background: var(--ambre-fond); color: var(--encre);
+  box-shadow: var(--ombre);
+}
+.etat-icone {
+  width: 3rem; height: 3rem; border-radius: 14px; flex: none;
+  display: grid; place-items: center;
+  background: var(--ambre); color: var(--ambre-fond);
+}
+.etat-icone svg { width: 1.6rem; height: 1.6rem; }
+.etat-textes { min-width: 0; }
+.etat-titre { margin: 0; font: 800 1.35rem/1.15 var(--f-titre); }
+.etat-sous { margin: 3px 0 0; color: var(--gris); font-size: var(--t-s); }
+.etat-fin { background: var(--or-fond); }
+.etat-fin .etat-icone { background: var(--or-texte); color: var(--or-fond); }
+.etat-partie .bouton { white-space: nowrap; }
+@media (max-width: 700px) {
+  .etat-partie { grid-template-columns: auto minmax(0, 1fr); padding: 14px; gap: 12px; }
+  .etat-partie .bouton { grid-column: 1 / -1; width: 100%; }
 }
 
 /* --- Modales -------------------------------------------------------------------------- */
@@ -649,6 +680,35 @@ html.mode-ecran { font-size: clamp(15px, calc(.6rem + .55vw), 24px); }
 .choix-adresse input { width: 20px; height: 20px; accent-color: var(--tapis); }
 .choix-adresse .note { margin-left: auto; font-weight: 400; }
 
+/* Menu de la partie : une icône, un nom, une phrase d'explication */
+.menu-partie { display: flex; flex-direction: column; gap: 6px; }
+.menu-titre {
+  margin: 8px 4px 2px; font: 700 var(--t-xs)/1.2 var(--f-texte);
+  text-transform: uppercase; letter-spacing: .08em; color: var(--gris);
+}
+.menu-titre:first-child { margin-top: 0; }
+.menu-item {
+  display: grid; grid-template-columns: 44px minmax(0, 1fr); align-items: center; gap: 14px;
+  width: 100%; min-height: 64px; margin: 0; padding: 10px 14px 10px 10px;
+  border: 0; border-radius: 14px;
+  background: var(--creux); color: var(--encre);
+  text-align: left; text-decoration: none;
+}
+.menu-item:active { background: var(--creux-appui); }
+.menu-icone {
+  width: 44px; height: 44px; border-radius: 12px;
+  display: grid; place-items: center;
+  background: var(--carte); color: var(--vert-texte);
+}
+.menu-icone svg { width: 24px; height: 24px; }
+.menu-textes { display: flex; flex-direction: column; gap: 2px; min-width: 0; }
+.menu-nom { font: 700 1.0625rem/1.25 var(--f-texte); }
+.menu-desc { font-size: .875rem; line-height: 1.3; color: var(--gris); }
+.menu-accent .menu-icone { background: var(--tapis); color: #FFFFFF; }
+.menu-danger .menu-icone { color: var(--pip); }
+.menu-danger .menu-nom { color: var(--pip); }
+.panneau-titres .code-mini { letter-spacing: .1em; }
+
 /* Victoire */
 .confettis { position: fixed; inset: 0; width: 100%; height: 100%; pointer-events: none; z-index: 1; }
 .modale-victoire .panneau { z-index: 2; }
@@ -722,8 +782,46 @@ html.modale-ouverte .toasts { bottom: auto; top: calc(12px + env(safe-area-inset
 }
 .champ-code::placeholder { letter-spacing: .3em; }
 
-.puce-code { text-decoration: none; padding: 8px 16px; gap: 10px; }
-.puce-code .code-mini { font-size: 1.125rem; }
+.ligne-code .bouton svg { width: 20px; height: 20px; margin-right: -6px; }
+
+/* Accueil : « Reprendre une partie » */
+.parties { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 8px; }
+.partie-recente { display: flex; align-items: stretch; gap: 8px; }
+.partie-lien {
+  flex: 1; min-width: 0; display: flex; align-items: center; gap: 12px;
+  min-height: 64px; padding: 10px 10px 10px 12px;
+  border-radius: var(--r-m); background: var(--carte); box-shadow: var(--ombre);
+  color: var(--encre); text-decoration: none;
+}
+.partie-code {
+  flex: none; padding: 9px 8px 8px 10px; border-radius: 10px;
+  background: var(--creux); font-size: 1.0625rem;
+}
+.partie-infos { flex: 1; min-width: 0; display: flex; flex-direction: column; gap: 4px; }
+.partie-joueurs { font-weight: 700; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.partie-haut { display: flex; align-items: center; flex-wrap: wrap; gap: 4px 8px; }
+.partie-haut .note { font-size: var(--t-xs); }
+.partie-lien > svg { width: 20px; height: 20px; color: var(--gris-clair); }
+.statut {
+  padding: 4px 7px 3px; border-radius: 6px;
+  font: 700 .75rem/1 var(--f-texte); letter-spacing: .04em; text-transform: uppercase;
+  background: var(--creux); color: var(--gris);
+}
+.statut-pause { background: var(--ambre-fond); color: var(--ambre); }
+.statut-finie { background: var(--or-fond); color: var(--or-texte); }
+.statut-en_cours { background: var(--moi-fond); color: var(--vert-texte); }
+.bouton-oublier {
+  flex: none; width: 64px; margin: 0; padding: 6px 4px;
+  display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 3px;
+  border: 0; border-radius: var(--r-m); background: var(--carte); box-shadow: var(--ombre);
+  color: var(--gris); font: 700 .75rem/1 var(--f-texte);
+}
+.bouton-oublier svg { width: 22px; height: 22px; }
+.bouton-oublier:active { color: var(--pip); }
+
+/* Ma fiche quand la partie est en pause */
+.fiche-pause { background: #3E5149; }
+.fiche-pause .fiche-statut { color: var(--sur-tapis); font-weight: 700; }
 
 .code-partie { margin: 0; color: var(--sur-tapis-doux); font-weight: 700; }
 .code-partie strong {
@@ -744,8 +842,16 @@ html.modale-ouverte .toasts { bottom: auto; top: calc(12px + env(safe-area-inset
   .rejoindre .jouer-ici { display: inline-flex; }
 }
 @media (max-width: 600px) {
+  /* Petits écrans : l'icône au-dessus de son nom, comme une barre d'outils. */
+  .bouton-barre {
+    flex-direction: column; gap: 3px;
+    min-width: 58px; min-height: 52px; padding: 6px 8px 5px;
+    font-size: .8125rem; line-height: 1.1;
+  }
+  .bouton-barre.a-court .bb-long { display: none; }
+  .bouton-barre.a-court .bb-court { display: inline; }
+  .barre-joueur { gap: 8px; padding-top: calc(8px + env(safe-area-inset-top, 0px)); padding-bottom: 8px; }
   .barre-ecran { flex-wrap: wrap; row-gap: 8px; }
-  .barre-ecran .infos-partie .note { display: none; }
   .barre-ecran .actions-ecran { margin-left: 0; width: 100%; justify-content: space-between; }
   .barre-ecran .actions-ecran .bouton-barre { flex: 1; }
   .code-partie strong { font-size: 1.6rem; }
@@ -763,6 +869,10 @@ html.modale-ouverte .toasts { bottom: auto; top: calc(12px + env(safe-area-inset
   .liste-joueurs.grande .total,
   .liste-joueurs.grande.dense .total { font-size: var(--t-xl); }
   .liste-joueurs.grande .progression { left: 16px; right: 16px; bottom: 7px; height: 4px; }
+}
+
+@media (max-width: 374px) {
+  .barre-joueur .mot-marque { display: none; }
 }
 
 @media (prefers-reduced-motion: reduce) {

@@ -1,13 +1,14 @@
 /*
  * Compteur 10 000 — version en ligne (GitHub Pages + Firebase Realtime Database).
  *
- *   ./                      accueil : nouvelle partie, rejoindre avec un code
+ *   ./                      accueil : créer une partie, rejoindre avec un code, reprendre une partie
  *   ./?p=CODE               joueurs (téléphones)
  *   ./?p=CODE&vue=ecran     écran de partie : QR code et classement en grand
  *
  * Chaque partie est un journal d'événements dans Firebase
  * (parties/CODE/evenements). On n'y fait qu'ajouter des événements ;
  * chaque appareil rejoue le journal (Regles.plier) pour obtenir la partie.
+ * Pause, clôture et effacement sont aussi des événements du journal.
  */
 (function () {
   'use strict';
@@ -21,7 +22,7 @@
   var bandeau = document.getElementById('bandeau');
   var REDUIT = !!(window.matchMedia && window.matchMedia('(prefers-reduced-motion: reduce)').matches);
   var fmt = R.fmt;
-  var VERSION = '3';
+  var VERSION = '4';
 
   var BASE = typeof CONFIG.base === 'string' ? CONFIG.base.trim().replace(/\/+$/, '') : '';
   var BASE_OK = /^https:\/\/[a-z0-9-]+(\.[a-z0-9-]+)*\.(firebasedatabase\.app|firebaseio\.com)$/i.test(BASE);
@@ -76,10 +77,19 @@
       return Array.isArray(l) ? l.filter(function (x) { return x && normaliserCode(x.code); }) : [];
     } catch (e) { return []; }
   }
-  function memoriserRecente(code) {
+  /** Retient la partie (et la vue utilisée : écran de partie ou joueur) pour l'accueil. */
+  function memoriserRecente(code, ecran) {
     var l = recentes().filter(function (x) { return x.code !== code; });
-    l.unshift({ code: code, t: Date.now() });
-    ecrire(CLE_RECENTES, JSON.stringify(l.slice(0, 4)));
+    l.unshift({ code: code, t: Date.now(), ecran: !!ecran });
+    ecrire(CLE_RECENTES, JSON.stringify(l.slice(0, 5)));
+  }
+  function oublierRecente(code) {
+    var l = recentes();
+    var reste = l.filter(function (x) { return x.code !== code; });
+    if (reste.length !== l.length) ecrire(CLE_RECENTES, JSON.stringify(reste));
+  }
+  function estRecente(code) {
+    return recentes().some(function (x) { return x.code === code; });
   }
 
   var S = {
@@ -91,8 +101,10 @@
     modale: null,
     saisie: { valeur: '', envoi: false },
     vus: null,
-    gagnantVu: undefined,
+    finVue: undefined,     // fin de partie déjà annoncée (victoire ou clôture)
+    statutVu: null,        // en_cours, pause, close : pour prévenir des changements
     partieVue: null,
+    resumes: {},           // accueil : état des parties récentes
     affiches: {},
     erreurRejoindre: null,
     erreurCode: CODE_BRUT && !CODE ? 'Ce code ne correspond à aucune partie : il fait 4 caractères, par exemple K7PM.' : null,
@@ -130,7 +142,20 @@
     reglages: '<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 7h10M18 7h2M4 17h4M12 17h8" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"/><circle cx="16" cy="7" r="2.2" fill="none" stroke="currentColor" stroke-width="2"/><circle cx="10" cy="17" r="2.2" fill="none" stroke="currentColor" stroke-width="2"/></svg>',
     partager: '<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 15V3.5M7.5 8L12 3.5 16.5 8M6 12H5v8.5h14V12h-1" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></svg>',
     copier: '<svg viewBox="0 0 24 24" aria-hidden="true"><rect x="8.5" y="8.5" width="11" height="11" rx="2" fill="none" stroke="currentColor" stroke-width="2"/><path d="M15.5 8.5V6a1.5 1.5 0 0 0-1.5-1.5H6A1.5 1.5 0 0 0 4.5 6v8A1.5 1.5 0 0 0 6 15.5h2.5" fill="none" stroke="currentColor" stroke-width="2"/></svg>',
-    ecran: '<svg viewBox="0 0 24 24" aria-hidden="true"><rect x="3" y="4.5" width="18" height="12" rx="2" fill="none" stroke="currentColor" stroke-width="2"/><path d="M8.5 20h7M12 16.5V20" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"/></svg>'
+    ecran: '<svg viewBox="0 0 24 24" aria-hidden="true"><rect x="3" y="4.5" width="18" height="12" rx="2" fill="none" stroke="currentColor" stroke-width="2"/><path d="M8.5 20h7M12 16.5V20" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"/></svg>',
+    // Icônes de la partie : chacune est toujours accompagnée de son nom écrit.
+    ajouterJoueur: '<svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="9.5" cy="8" r="3.8" fill="none" stroke="currentColor" stroke-width="2"/><path d="M2.5 20a7 7 0 0 1 14 0M19.5 7.5v6M16.5 10.5h6" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"/></svg>',
+    pause: '<svg viewBox="0 0 24 24" aria-hidden="true"><rect x="5.5" y="4.5" width="4.6" height="15" rx="1.3" fill="currentColor"/><rect x="13.9" y="4.5" width="4.6" height="15" rx="1.3" fill="currentColor"/></svg>',
+    lecture: '<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M7.5 5.2v13.6a1.1 1.1 0 0 0 1.7.93l10.6-6.8a1.1 1.1 0 0 0 0-1.86L9.2 4.27a1.1 1.1 0 0 0-1.7.93z" fill="currentColor"/></svg>',
+    drapeau: '<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M5 4.5h3.5v3H5zM12 4.5h3.5v3H12zM8.5 7.5H12v3H8.5zM15.5 7.5H19v3h-3.5zM5 10.5h3.5v3H5zM12 10.5h3.5v3H12z" fill="currentColor"/><path d="M5 21.5V3.5M5 4.5h14v9H5" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></svg>',
+    poubelle: '<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 6.5h16M9.5 6.5V4.8a1.3 1.3 0 0 1 1.3-1.3h2.4a1.3 1.3 0 0 1 1.3 1.3v1.7M6.5 6.5l.9 12.6a1.5 1.5 0 0 0 1.5 1.4h6.2a1.5 1.5 0 0 0 1.5-1.4l.9-12.6M10 10.5v6M14 10.5v6" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></svg>',
+    engrenage: '<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M10.19 5.24 10.58 2.51 13.42 2.51 13.81 5.24 15.5 5.94 17.71 4.28 19.72 6.29 18.06 8.5 18.76 10.19 21.49 10.58 21.49 13.42 18.76 13.81 18.06 15.5 19.72 17.71 17.71 19.72 15.5 18.06 13.81 18.76 13.42 21.49 10.58 21.49 10.19 18.76 8.5 18.06 6.29 19.72 4.28 17.71 5.94 15.5 5.24 13.81 2.51 13.42 2.51 10.58 5.24 10.19 5.94 8.5 4.28 6.29 6.29 4.28 8.5 5.94z" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linejoin="round"/><circle cx="12" cy="12" r="3" fill="none" stroke="currentColor" stroke-width="2"/></svg>',
+    menu: '<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 6.5h16M4 12h16M4 17.5h16" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round"/></svg>',
+    maison: '<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M3.5 11 12 4l8.5 7M6 9.5v10.5h4.5v-5.5h3v5.5H18V9.5" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></svg>',
+    changer: '<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M16 3.5l4 4-4 4M20 7.5H5M8 20.5l-4-4 4-4M4 16.5h15" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></svg>',
+    trophee: '<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M7.5 4h9v5.5a4.5 4.5 0 0 1-9 0zM7.5 6H4.5a3 3 0 0 0 3.4 4.4M16.5 6h3a3 3 0 0 1-3.4 4.4M12 14v3.5M8.5 20.5h7M10 17.5h4v3h-4z" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></svg>',
+    groupe: '<svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="9" cy="8.5" r="3.3" fill="none" stroke="currentColor" stroke-width="2"/><path d="M3 19.5a6 6 0 0 1 12 0M15.5 5.3a3.3 3.3 0 0 1 0 6.4M17.5 13.6a6 6 0 0 1 3.5 5.9" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"/></svg>',
+    chevron: '<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M9.5 6l6 6-6 6" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"/></svg>'
   };
 
   /** Un dé dessiné : n points, le 1 en rouge comme sur les vrais dés. */
@@ -221,10 +246,13 @@
     return e;
   }
 
-  function messageFirebase(e) {
+  // Pause, clôture et effacement demandent les règles Firebase mises à jour (version 4).
+  var MESSAGE_REGLES = 'Ce bouton a besoin des nouvelles règles Firebase : dans la console Firebase, ouvre Realtime Database, onglet Règles, colle les nouvelles règles puis clique sur Publier.';
+
+  function messageFirebase(e, nouveau) {
     var texte = String((e && (e.code || e.message)) || '');
     if (/permission|denied/i.test(texte)) {
-      return 'La base Firebase refuse l’accès. Vérifie que les règles du guide sont bien publiées (étape 3).';
+      return nouveau ? MESSAGE_REGLES : 'La base Firebase refuse l’accès. Vérifie que les règles du guide sont bien publiées (étape 3).';
     }
     return 'Impossible de joindre la partie. Vérifie que ce téléphone est connecté à internet.';
   }
@@ -241,21 +269,40 @@
 
   /**
    * Ajoute un événement au journal. L'écran se met à jour tout de suite.
+   * opts : { silencieux, nouveau (événement apparu en version 4), code (autre partie) }.
    * Une erreur lève une exception avec un message lisible (rattrapée par envoyer).
    */
-  function publier(evenement, silencieux) {
+  function publier(evenement, opts) {
+    opts = opts || {};
     if (!base) throw erreur('Le compteur se charge encore, réessaie dans un instant.', 'attente');
     evenement.t = base.horodatage();
     var p;
     try {
-      p = base.ajouter(cheminPartie(CODE), evenement);
+      p = base.ajouter(cheminPartie(opts.code || CODE), evenement);
     } catch (e) {
       throw erreur('Enregistrement impossible : ' + ((e && e.message) || e) + '. Recharge la page.', 'firebase');
     }
-    if (!silencieux) {
-      p.ecriture.catch(function (e) { toast(messageFirebase(e), { erreur: true, duree: 9000 }); });
+    if (!opts.silencieux) {
+      p.ecriture.catch(function (e) { toast(messageFirebase(e, opts.nouveau), { erreur: true, duree: 12000 }); });
     }
     return p;
+  }
+
+  function avecDelai(promesse, ms) {
+    return Promise.race([promesse, new Promise(function (ok, ko) {
+      setTimeout(function () { ko(erreur('Pas de réponse : vérifie la connexion internet.', 'delai')); }, ms || 15000);
+    })]);
+  }
+
+  /** Efface une autre partie depuis l'accueil ; se résout quand Firebase a bien enregistré. */
+  function effacerDepuisAccueil(code) {
+    var p;
+    try {
+      p = publier({ type: 'effacer' }, { code: code, silencieux: true });
+    } catch (e) {
+      return Promise.reject(e && e.code ? e : erreur('Problème technique : ' + ((e && e.message) || e), 'technique'));
+    }
+    return avecDelai(p.ecriture);
   }
 
   // Attendre qu'un événement publié soit pris en compte (pour savoir si un prénom est accepté).
@@ -317,7 +364,7 @@
         if (S.etat.joueurs.length >= R.MAX_JOUEURS) {
           return Promise.reject(erreur('La partie est complète (' + R.MAX_JOUEURS + ' joueurs au maximum).', 'complet'));
         }
-        p = publier({ type: 'joueur', nom: nom }, true);
+        p = publier({ type: 'joueur', nom: nom }, { silencieux: true });
         return new Promise(function (ok, ko) {
           p.ecriture.catch(function (e) { ko(erreur(messageFirebase(e), 'firebase')); });
           attendre(function (etat) {
@@ -331,10 +378,13 @@
         });
       }
       case 'tour':
+        if (S.a.pause) return Promise.reject(erreur('La partie est en pause : reprends-la pour noter des points.', 'pause'));
+        if (S.a.fini) return Promise.reject(erreur('La partie est terminée.', 'fin'));
         if (!S.a.parId[d.joueur]) return Promise.reject(erreur('Ce joueur n’est plus dans la partie.', 'joueur_inconnu'));
         p = publier({ type: 'tour', j: d.joueur, pts: Math.max(0, Math.round(Number(d.points) || 0)), par: d.par === 'ecran' ? 'ecran' : d.joueur });
         return Promise.resolve({ tour: p.cle });
       case 'annuler': {
+        if (S.a.statut === 'close') return Promise.reject(erreurCloturee());
         var dernier = null;
         S.etat.tours.forEach(function (t) { if (t.j === d.joueur) dernier = t; });
         if (!dernier) return Promise.reject(erreur('Aucun tour à annuler.', 'rien'));
@@ -342,6 +392,7 @@
         return Promise.resolve({ retire: dernier });
       }
       case 'supprimerTour':
+        if (S.a.statut === 'close') return Promise.reject(erreurCloturee());
         if (!S.etat.tours.some(function (t) { return t.id === d.tour; })) return Promise.reject(erreur('Ce tour a déjà été annulé.', 'rien'));
         publier({ type: 'annuler', tour: d.tour });
         return Promise.resolve({});
@@ -364,8 +415,28 @@
       case 'nouvellePartie':
         publier({ type: 'rejouer', garder: d.garderJoueurs !== false });
         return Promise.resolve({});
+      case 'pause':
+        if (S.a.pause) return Promise.resolve({});
+        if (S.a.fini) return Promise.reject(erreur('La partie est terminée.', 'fin'));
+        publier({ type: 'pause' }, { nouveau: true });
+        return Promise.resolve({});
+      case 'reprise':
+        if (!S.a.pause && S.a.statut !== 'close') return Promise.resolve({});
+        publier({ type: 'reprise' }, { nouveau: true });
+        return Promise.resolve({});
+      case 'cloture':
+        if (S.a.fini) return Promise.reject(erreur('La partie est déjà terminée.', 'fin'));
+        publier({ type: 'cloture' }, { nouveau: true });
+        return Promise.resolve({});
+      case 'effacer':
+        publier({ type: 'effacer' }, { nouveau: true });
+        return Promise.resolve({});
     }
     return Promise.reject(erreur('Action inconnue.'));
+  }
+
+  function erreurCloturee() {
+    return erreur('La partie est clôturée : rouvre-la depuis le menu pour corriger un score.', 'close');
   }
 
   function erreurAction(e) {
@@ -380,25 +451,20 @@
     S.creation = true;
     rendre();
     var essais = 0;
-    function delai(promesse) {
-      return Promise.race([promesse, new Promise(function (ok, ko) {
-        setTimeout(function () { ko(erreur('Pas de réponse : vérifie la connexion internet.', 'delai')); }, 15000);
-      })]);
-    }
     function essayer() {
       var code = genererCode();
-      return delai(base.existe(cheminPartie(code))).then(function (existe) {
+      return avecDelai(base.existe(cheminPartie(code))).then(function (existe) {
         if (existe) {
           essais++;
           if (essais > 6) throw erreur('Aucun code libre trouvé, réessaie.', 'code');
           return essayer();
         }
         var p = base.ajouter(cheminPartie(code), { type: 'creation', t: base.horodatage() });
-        return delai(p.ecriture).then(function () { return code; });
+        return avecDelai(p.ecriture).then(function () { return code; });
       });
     }
     essayer().then(function (code) {
-      memoriserRecente(code);
+      memoriserRecente(code, true);
       location.href = lienPartie(code, 'ecran');
     }).catch(function (e) {
       S.creation = false;
@@ -438,7 +504,15 @@
       verifierAttentes();
       return;
     }
-    if (premier) memoriserRecente(CODE);
+    if (etat.statut === 'effacee') {
+      // Effacée (ici ou sur un autre appareil) : tout le monde voit « Partie effacée ».
+      oublierRecente(CODE);
+      if (S.modale) fermer();
+      rendre();
+      verifierAttentes();
+      return;
+    }
+    if (premier || !estRecente(CODE)) memoriserRecente(CODE, ECRAN);
 
     if (S.moi && !S.a.parId[S.moi]) {
       S.moi = null;
@@ -457,20 +531,29 @@
     });
     S.vus = ids;
 
-    var cleGagnant = S.a.gagnant ? idPartie + ':' + S.a.gagnant.id : null;
-    var victoire = !premier && cleGagnant && cleGagnant !== S.gagnantVu;
-    S.gagnantVu = cleGagnant;
+    // Fin de partie : quelqu'un atteint l'objectif, ou la partie est clôturée.
+    var cleFin = S.a.fini ? idPartie + ':' + (S.a.gagnant ? 'g' + S.a.gagnant.id : 'c' + etat.depuis) : null;
+    var fin = !premier && cleFin && cleFin !== S.finVue;
+    S.finVue = cleFin;
+
+    var ancienStatut = S.statutVu;
+    S.statutVu = etat.statut;
+    var changement = !premier && !nouvellePartie && ancienStatut && ancienStatut !== etat.statut;
 
     rendre(nouveaux);
 
-    if (victoire) {
-      ouvrir({ type: 'victoire', fete: true });
-    } else if (!cleGagnant && S.modale && S.modale.type === 'victoire') {
+    if (fin) {
+      ouvrir({ type: 'victoire', fete: !!S.a.vainqueur });
+    } else if (!cleFin && S.modale && S.modale.type === 'victoire') {
+      fermer();
+    } else if (S.a.pause && S.modale && S.modale.type === 'saisie') {
       fermer();
     } else {
       majModale();
     }
     if (nouvellePartie) toast('Nouvelle partie : les scores repartent à zéro.');
+    else if (changement && etat.statut === 'pause') toast('Partie en pause. Les scores sont gardés.');
+    else if (changement && etat.statut === 'en_cours') toast(ancienStatut === 'close' ? 'La partie est rouverte.' : 'La partie reprend !');
     verifierAttentes();
   }
 
@@ -519,6 +602,7 @@
     if (!CODE) return vueAccueil();
     if (!S.etat) return '<p class="chargement">Connexion à la partie ' + esc(CODE) + '…</p>';
     if (!S.etat.existe) return vueIntrouvable();
+    if (S.etat.statut === 'effacee') return vueEffacee();
     if (ECRAN) return vueEcran();
     if (moiValide()) return vueJoueur();
     if (S.spectateur) return vueSpectateur();
@@ -586,13 +670,65 @@
   }
 
   function pastilleManche(a) {
-    if (a.gagnant) return '<span class="pastille pastille-fin">Partie terminée</span>';
+    if (a.pause) return '<span class="pastille pastille-pause">' + I.pause + 'En pause</span>';
+    if (a.fini) return '<span class="pastille pastille-fin">Terminée</span>';
     return '<span class="pastille">' + (a.commencee ? 'Tour ' + a.manche : 'Prêts ?') + '</span>';
   }
 
-  function boutonBarre(action, icone, texte, masquerTexte) {
-    return '<button class="bouton-barre" data-action="' + action + '" title="' + esc(texte) + '"' + (masquerTexte ? ' aria-label="' + esc(texte) + '"' : '') + '>' +
-      icone + '<span class="' + (masquerTexte ? 'sr' : 'bouton-barre-texte') + '">' + esc(texte) + '</span></button>';
+  /**
+   * Bouton de la barre du haut : une icône et toujours son nom écrit.
+   * court : nom plus court pour les petits écrans (le nom complet reste lu par VoiceOver).
+   */
+  function boutonBarre(action, icone, texte, court, classe) {
+    return '<button class="bouton-barre' + (court ? ' a-court' : '') + (classe ? ' ' + classe : '') + '" data-action="' + action + '"' +
+      (court ? ' aria-label="' + esc(texte) + '"' : '') + '>' + icone +
+      '<span class="bb-long">' + esc(texte) + '</span>' +
+      (court ? '<span class="bb-court" aria-hidden="true">' + esc(court) + '</span>' : '') + '</button>';
+  }
+
+  function heure(t) {
+    return new Date(t).toLocaleTimeString('fr-FR', { hour: '2-digit', minute: '2-digit' });
+  }
+  /** « 21:40 », « hier à 21:40 » ou « le 28 oct. » */
+  function moment(t) {
+    if (!t) return '';
+    var d = new Date(t);
+    var auj = new Date();
+    var hier = new Date(auj.getFullYear(), auj.getMonth(), auj.getDate() - 1);
+    if (d.toDateString() === auj.toDateString()) return heure(t);
+    if (d.toDateString() === hier.toDateString()) return 'hier à ' + heure(t);
+    return 'le ' + d.toLocaleDateString('fr-FR', { day: 'numeric', month: 'short' });
+  }
+  /** « Damien, Léa, Paul +2 » */
+  function listeNoms(noms) {
+    return noms.slice(0, 3).join(', ') + (noms.length > 3 ? ' +' + (noms.length - 3) : '');
+  }
+
+  /** Bandeau « en pause » ou « terminée », au-dessus du classement. */
+  function bandeauEtat(a) {
+    if (a.pause) {
+      var depuis = moment(S.etat.depuis);
+      return '<section class="etat-partie etat-pause" role="status">' +
+        '<span class="etat-icone">' + I.pause + '</span>' +
+        '<div class="etat-textes"><p class="etat-titre">Partie en pause' + (depuis ? ' depuis ' + esc(depuis) : '') + '</p>' +
+          '<p class="etat-sous">Les scores sont gardés. Vous pouvez fermer l’appli : la partie vous attend dans « Reprendre une partie », sur l’accueil.</p></div>' +
+        '<button class="bouton bouton-principal" data-action="reprendre">' + I.lecture + '<span>Reprendre la partie</span></button>' +
+      '</section>';
+    }
+    if (!a.fini) return '';
+    var titre, sous;
+    if (a.gagnant) {
+      titre = esc(a.gagnant.nom) + ' a gagné !';
+      sous = 'Partie terminée : ' + fmt(a.regles.objectif) + (a.regles.pile ? ' pile.' : ' atteint.');
+    } else {
+      titre = a.vainqueur ? esc(a.vainqueur.nom) + ' gagne la partie' : (a.egalite ? 'Égalité en tête' : 'Partie clôturée');
+      sous = 'Partie clôturée : le classement est définitif.';
+    }
+    return '<section class="etat-partie etat-fin" role="status">' +
+      '<span class="etat-icone">' + (a.gagnant ? I.trophee : I.drapeau) + '</span>' +
+      '<div class="etat-textes"><p class="etat-titre">' + titre + '</p><p class="etat-sous">' + sous + '</p></div>' +
+      '<button class="bouton bouton-principal" data-action="nouvelle">' + I.rejouer + '<span>Nouvelle partie</span></button>' +
+    '</section>';
   }
 
   // --- Vues : configuration, erreur, accueil, partie introuvable ------------------
@@ -615,38 +751,96 @@
   }
 
   function dateCourte(t) {
-    var d = new Date(t);
-    var auj = new Date();
-    if (d.toDateString() === auj.toDateString()) {
-      return 'aujourd’hui ' + d.toLocaleTimeString('fr-FR', { hour: '2-digit', minute: '2-digit' });
+    var m = moment(t);
+    return /^\d/.test(m) ? 'aujourd’hui à ' + m : m;
+  }
+
+  var LIBELLES_STATUT = { pause: 'En pause', finie: 'Terminée', en_cours: 'En cours', attente: 'Pas commencée' };
+
+  /** Résumé d'une partie pour la liste « Reprendre une partie ». */
+  function resumer(p) {
+    var a = R.analyser(p);
+    return {
+      ok: true,
+      statut: a.pause ? 'pause' : (a.fini ? 'finie' : (a.commencee ? 'en_cours' : 'attente')),
+      noms: a.joueurs.map(function (f) { return f.nom; }),
+      derniere: p.derniere
+    };
+  }
+
+  function chargerResumes() {
+    recentes().forEach(function (x) {
+      if (S.resumes[x.code]) return;
+      S.resumes[x.code] = { chargement: true };
+      avecDelai(base.lire(cheminPartie(x.code)), 15000).then(function (valeur) {
+        var p = R.plier(valeur);
+        if (!p.existe || p.statut === 'effacee') {
+          oublierRecente(x.code);          // partie effacée ailleurs : on ne la propose plus
+          delete S.resumes[x.code];
+        } else {
+          S.resumes[x.code] = resumer(p);
+        }
+        if (!CODE) rendre();
+      }).catch(function () {
+        S.resumes[x.code] = { erreur: true };
+        if (!CODE) rendre();
+      });
+    });
+  }
+
+  function lignePartieRecente(x) {
+    var r = S.resumes[x.code];
+    var statut = '';
+    var joueurs = '…';
+    var quand = dateCourte(x.t);
+    if (r && r.ok) {
+      statut = '<span class="statut statut-' + r.statut + '">' + esc(LIBELLES_STATUT[r.statut]) + '</span>';
+      joueurs = r.noms.length ? listeNoms(r.noms) : 'Aucun joueur pour l’instant';
+      if (r.derniere) quand = dateCourte(r.derniere);
+    } else if (r && r.erreur) {
+      joueurs = 'Partie ' + x.code;
     }
-    return d.toLocaleDateString('fr-FR', { day: 'numeric', month: 'short' });
+    return '<li class="partie-recente">' +
+      '<a class="partie-lien" href="' + esc(lienPartie(x.code, x.ecran ? 'ecran' : '')) + '">' +
+        '<span class="partie-code code-mini">' + esc(x.code) + '</span>' +
+        '<span class="partie-infos"><span class="partie-joueurs">' + esc(joueurs) + '</span>' +
+          '<span class="partie-haut">' + statut + '<span class="note">' + esc(quand) + '</span></span></span>' +
+        I.chevron +
+      '</a>' +
+      '<button class="bouton-oublier" data-action="effacer-recente" data-code="' + esc(x.code) + '">' + I.poubelle +
+        '<span>Effacer</span></button>' +
+    '</li>';
   }
 
   function vueAccueil() {
     var liste = recentes();
     var recentesHtml = liste.length
-      ? '<section class="deja" aria-labelledby="titre-recentes"><h2 id="titre-recentes" class="etiquette">Reprendre une partie</h2><div class="puces">' +
-        liste.map(function (x) {
-          return '<a class="puce-joueur puce-code" href="' + esc(lienPartie(x.code)) + '"><span class="code-mini">' + esc(x.code) + '</span><span class="note">' + esc(dateCourte(x.t)) + '</span></a>';
-        }).join('') + '</div></section>'
+      ? '<section class="deja" aria-labelledby="titre-recentes"><h2 id="titre-recentes" class="etiquette">Reprendre une partie</h2>' +
+        '<ul class="parties">' + liste.map(lignePartieRecente).join('') + '</ul></section>'
       : '';
     return '<main class="accueil">' + enteteAccueil() +
       '<section class="carte">' +
         '<button class="bouton bouton-principal bouton-large" data-action="creer"' + (S.creation ? ' disabled' : '') + '>' +
-          (S.creation ? 'Création de la partie…' : 'Nouvelle partie') + '</button>' +
+          I.plus + '<span>' + (S.creation ? 'Création de la partie…' : 'Créer une partie') + '</span></button>' +
         '<p class="note note-centree">Un QR code s’affiche : les autres le scannent pour rejoindre la partie.</p>' +
       '</section>' +
       '<form class="carte" data-form="code" novalidate>' +
         '<label for="champ-code" class="etiquette-champ">Rejoindre avec un code</label>' +
         '<div class="ligne-code">' +
           '<input id="champ-code" class="champ champ-code" maxlength="4" autocomplete="off" autocapitalize="characters" autocorrect="off" spellcheck="false" enterkeyhint="go" placeholder="K7PM" aria-describedby="aide-code">' +
-          '<button class="bouton bouton-secondaire" type="submit">Rejoindre</button>' +
+          '<button class="bouton bouton-secondaire" type="submit">Rejoindre' + I.chevron + '</button>' +
         '</div>' +
         (S.erreurCode ? '<p class="message message-alerte" role="alert" id="aide-code">' + esc(S.erreurCode) + '</p>' : '<p class="note" id="aide-code">Le code de 4 caractères est affiché sous le QR code.</p>') +
       '</form>' + recentesHtml +
-      '<div class="liens-bas"><button class="lien" data-action="regles">Règles du jeu</button></div>' +
+      '<div class="liens-bas"><button class="lien" data-action="regles">' + I.livre + '<span>Règles du jeu</span></button></div>' +
     '</main>';
+  }
+
+  function vueEffacee() {
+    return '<main class="accueil">' + enteteAccueil() +
+      '<section class="carte" role="alert"><h2 class="titre-bloc">' + I.poubelle + 'Partie effacée</h2>' +
+      '<p class="texte">La partie <strong class="code-mini">' + esc(CODE) + '</strong> a été effacée : ses scores ne sont plus disponibles.</p>' +
+      '<a class="bouton bouton-principal bouton-large" href="' + esc(SITE) + '">' + I.maison + '<span>Retour à l’accueil</span></a></section></main>';
   }
 
   function vueIntrouvable() {
@@ -662,7 +856,7 @@
     var a = S.a;
     var nb = a.joueurs.length;
     var etatPartie = nb
-      ? nb + (nb > 1 ? ' joueurs' : ' joueur') + (a.gagnant ? ' · partie terminée' : (a.commencee ? ' · tour ' + a.manche : ' · la partie va commencer'))
+      ? nb + (nb > 1 ? ' joueurs' : ' joueur') + (a.pause ? ' · partie en pause' : (a.fini ? ' · partie terminée' : (a.commencee ? ' · tour ' + a.manche : ' · la partie va commencer')))
       : 'Tu es le premier : les autres apparaîtront ici.';
     var erreurHtml = '';
     if (S.erreurRejoindre) {
@@ -695,38 +889,39 @@
 
   // --- Vue : joueur -----------------------------------------------------------
 
-  function barreJoueur(spectateur) {
-    return '<header class="barre">' + marque() + pastilleManche(S.a) +
-      '<nav class="barre-actions" aria-label="Menu">' +
-        boutonBarre('inviter', I.qr, 'Inviter', true) +
-        boutonBarre('regles', I.livre, 'Règles', true) +
-        (spectateur ? boutonBarre('jouer', I.personne, 'Jouer') : '') +
+  function barreJoueur() {
+    return '<header class="barre barre-joueur">' + marque() + pastilleManche(S.a) +
+      '<nav class="barre-actions" aria-label="Partie">' +
+        boutonBarre('regles', I.livre, 'Règles') +
+        boutonBarre('menu', I.menu, 'Menu') +
       '</nav></header>';
-  }
-
-  function piedJoueur() {
-    return '<div class="liens-bas">' +
-      '<a class="lien" href="' + esc(lienPartie(CODE, 'ecran')) + '">Écran de partie</a>' +
-      '<button class="lien" data-action="changer-joueur">Changer de joueur</button></div>';
   }
 
   function vueJoueur() {
     var f = S.a.parId[S.moi];
-    return barreJoueur(false) + '<main class="page">' + ficheMoi(f, S.a) + sectionClassement(S.a, f.id, false) + piedJoueur() + '</main>';
+    return barreJoueur() + '<main class="page">' + ficheMoi(f, S.a) + sectionClassement(S.a, f.id, false) + '</main>';
   }
 
   function vueSpectateur() {
-    return barreJoueur(true) + '<main class="page">' +
-      '<div class="message message-info"><p>Tu regardes la partie sans jouer.</p><button class="bouton bouton-secondaire" data-action="jouer">Jouer aussi</button></div>' +
-      sectionClassement(S.a, null, false) + '</main>';
+    return barreJoueur() + '<main class="page">' +
+      '<div class="message message-info"><p>Tu regardes la partie sans jouer.</p><button class="bouton bouton-secondaire" data-action="jouer">' + I.personne + '<span>Jouer aussi</span></button></div>' +
+      bandeauEtat(S.a) + sectionClassement(S.a, null, false) + '</main>';
   }
 
   function ficheMoi(f, a) {
     var r = a.regles;
-    var fini = !!a.gagnant;
+    var fini = a.fini;
     var statut;
-    if (fini) {
+    if (fini && a.gagnant) {
       statut = a.gagnant === f ? 'Bravo, tu as gagné la partie !' : esc(a.gagnant.nom) + ' a gagné la partie.';
+    } else if (fini) {
+      if (a.vainqueur === f) statut = 'Partie clôturée : bravo, tu as gagné !';
+      else if (a.vainqueur) statut = 'Partie clôturée : ' + esc(a.vainqueur.nom) + ' gagne. Tu finis ' + R.rang(f.rang) + '.';
+      else if (a.egalite) statut = 'Partie clôturée : égalité en tête' + (f.rang === 1 ? ', bravo !' : '.');
+      else statut = 'Partie clôturée.';
+    } else if (a.pause) {
+      var depuis = moment(S.etat.depuis);
+      statut = 'Partie en pause' + (depuis ? ' depuis ' + esc(depuis) : '') + '. Les scores sont gardés.';
     } else if (!f.ouvert) {
       statut = 'Pour entrer dans la partie : <strong class="num">' + fmt(R.seuilEntree(r)) + '</strong> points en un tour';
     } else {
@@ -742,15 +937,16 @@
     var nb = a.joueurs.length;
     var rang = nb > 1 ? '<span class="fiche-rang">' + R.rang(f.rang) + ' sur ' + nb + '</span>' : '';
     var dernier = '';
-    if (f.dernier) {
+    if (f.dernier && a.statut !== 'close') {   // clôturée : le classement ne bouge plus
       var t = R.texteLigne(f.dernier);
       dernier = '<button class="lien lien-clair" data-action="annuler-dernier">' + I.annuler +
         '<span>Annuler mon dernier tour (' + esc(t.coup) + ')</span></button>';
     }
-    var action = fini
-      ? '<button class="bouton bouton-de bouton-large" data-action="nouvelle">' + I.rejouer + '<span>Rejouer</span></button>'
-      : '<button class="bouton bouton-de bouton-large" data-action="saisir">Noter mon tour</button>';
-    return '<section class="fiche-moi' + (fini && a.gagnant === f ? ' fiche-gagnante' : '') + '" aria-labelledby="nom-moi">' +
+    var action;
+    if (fini) action = '<button class="bouton bouton-de bouton-large" data-action="nouvelle">' + I.rejouer + '<span>Nouvelle partie</span></button>';
+    else if (a.pause) action = '<button class="bouton bouton-de bouton-large" data-action="reprendre">' + I.lecture + '<span>Reprendre la partie</span></button>';
+    else action = '<button class="bouton bouton-de bouton-large" data-action="saisir">Noter mon tour</button>';
+    return '<section class="fiche-moi' + (fini && a.vainqueur === f ? ' fiche-gagnante' : '') + (a.pause ? ' fiche-pause' : '') + '" aria-labelledby="nom-moi">' +
       '<div class="fiche-entete">' + avatar(f, 'avatar-clair') + '<h1 id="nom-moi" class="fiche-nom">' + esc(f.nom) + '</h1>' + rang + '</div>' +
       '<p class="fiche-total num" data-total="' + esc(f.id) + '" data-ctx="moi" aria-label="Ton total : ' + fmt(f.total) + ' points">' + fmt(f.total) + '</p>' +
       '<p class="fiche-statut">' + statut + '</p>' + alerteCroix +
@@ -774,14 +970,14 @@
   function ligneJoueur(f, a, moiId) {
     var r = a.regles;
     var etat = [];
-    if (a.gagnant === f) etat.push('<span class="etiquette-gagnant">Gagnant</span>');
+    if (a.vainqueur === f) etat.push('<span class="etiquette-gagnant">Victoire</span>');
     else if (!f.ouvert) etat.push('pas encore entré');
-    if (f.aJouer && !a.gagnant) etat.push('<span class="a-jouer">à jouer</span>');
-    if (r.troisCroix && f.croix && !a.gagnant) etat.push(croix(f.croix));
+    if (f.aJouer && !a.fini && !a.pause) etat.push('<span class="a-jouer">à jouer</span>');
+    if (r.troisCroix && f.croix && !a.fini) etat.push(croix(f.croix));
     var t = f.dernier ? R.texteLigne(f.dernier) : null;
     var pct = Math.max(0, Math.min(100, f.total / r.objectif * 100));
     var estMoi = f.id === moiId;
-    return '<li class="ligne-joueur' + (estMoi ? ' moi' : '') + (a.gagnant === f ? ' gagnant' : '') + '" data-id="' + esc(f.id) + '">' +
+    return '<li class="ligne-joueur' + (estMoi ? ' moi' : '') + (a.vainqueur === f ? ' gagnant' : '') + '" data-id="' + esc(f.id) + '">' +
       '<button class="ligne-bouton" data-action="voir" data-joueur="' + esc(f.id) + '" aria-label="' +
         esc(f.nom + ', ' + R.rang(f.rang) + ', ' + fmt(f.total) + ' points. Voir sa feuille de score.') + '">' +
         '<span class="rang num">' + f.rang + '</span>' + avatar(f) +
@@ -800,17 +996,20 @@
 
   function vueEcran() {
     var a = S.a;
+    // Le 2e bouton change selon la partie : Pause, Reprendre, ou Nouvelle partie quand elle est finie.
+    var deuxieme;
+    if (a.fini) deuxieme = boutonBarre('nouvelle', I.rejouer, 'Nouvelle partie', 'Nouvelle');
+    else if (a.pause) deuxieme = boutonBarre('reprendre', I.lecture, 'Reprendre', null, 'bouton-barre-accent');
+    else deuxieme = boutonBarre('pause', I.pause, 'Pause');
     return '<header class="barre barre-ecran">' + marque() +
       '<div class="infos-partie">' + pastilleManche(a) + '<span class="note">' + objectifTexte(a.regles) + '</span></div>' +
       '<nav class="actions-ecran" aria-label="Partie">' +
-        boutonBarre('jouer-ici', I.personne, 'Jouer sur cet appareil') +
-        boutonBarre('ajouter', I.plus, 'Ajouter un joueur') +
-        boutonBarre('parametres', I.reglages, 'Règles de la maison') +
-        boutonBarre('nouvelle', I.rejouer, 'Nouvelle partie') +
-        (PLEIN_ECRAN ? boutonBarre('plein-ecran', I.agrandir, 'Plein écran', true) : '') +
+        boutonBarre('ajouter', I.ajouterJoueur, 'Ajouter un joueur', 'Ajouter') +
+        deuxieme +
+        boutonBarre('menu', I.menu, 'Menu') +
       '</nav></header>' +
       '<main class="ecran' + (a.joueurs.length ? '' : ' ecran-attente') + '">' + panneauRejoindre() +
-        '<div class="tableau">' + (a.joueurs.length ? sectionClassement(a, null, true) + journal(a) : attente()) + '</div>' +
+        '<div class="tableau">' + bandeauEtat(a) + (a.joueurs.length ? sectionClassement(a, null, true) + journal(a) : attente()) + '</div>' +
       '</main>';
   }
 
@@ -839,7 +1038,7 @@
     return '<div class="attente">' + de(5, 'de-attente') +
       '<h2 class="titre-attente">En attente des joueurs</h2>' +
       '<p>Scannez le code avec vos téléphones. Les prénoms apparaîtront ici dès que chacun aura rejoint la partie.</p>' +
-      '<p class="note">Un joueur sans téléphone ? <button class="lien" data-action="ajouter">Ajoutez-le ici</button> et notez ses points depuis cet écran.</p>' +
+      '<p class="note">Un joueur sans téléphone ? <button class="lien" data-action="ajouter">' + I.ajouterJoueur + '<span>Ajoutez-le ici</span></button> et notez ses points depuis cet écran.</p>' +
     '</div>';
   }
 
@@ -890,6 +1089,9 @@
       case 'retirer': return modaleRetirer(m);
       case 'aide': return modaleAide();
       case 'victoire': return modaleVictoire();
+      case 'menu': return modaleMenu();
+      case 'cloturer': return modaleCloturer();
+      case 'effacer': return modaleEffacer(m);
     }
     return '';
   }
@@ -919,7 +1121,7 @@
     }
   }
 
-  var SANS_RAFRAICHIR = { ajouter: 1, renommer: 1, nouvelle: 1, retirer: 1, victoire: 1, inviter: 1, aide: 1 };
+  var SANS_RAFRAICHIR = { ajouter: 1, renommer: 1, nouvelle: 1, retirer: 1, victoire: 1, inviter: 1, aide: 1, effacer: 1 };
 
   function majModale() {
     var m = S.modale;
@@ -985,16 +1187,16 @@
     if (!sortie || !f) return;
     sortie.textContent = v ? fmt(p) : '0';
     sortie.classList.toggle('vide', !v);
-    var fini = !!S.a.gagnant;
+    var bloque = S.a.pause ? 'pause' : S.a.fini;
     var info;
-    if (fini) info = { ok: false, type: 'fin', texte: 'La partie est terminée.' };
+    if (bloque) info = R.apercu(f, S.a.regles, p, bloque);
     else if (!v) info = { ok: false, type: 'vide', texte: (!ECRAN && m.joueur === S.moi) ? 'Tape tes points, ou « Raté » si ton tour n’a rien rapporté.' : 'Tape les points de ' + f.nom + ', ou « Raté ».' };
-    else info = R.apercu(f, S.a.regles, p, fini);
+    else info = R.apercu(f, S.a.regles, p, false);
     apercu.textContent = info.texte;
     apercu.className = 'apercu apercu-' + info.type;
     bouton.disabled = !v || p === 0 || !info.ok;
     bouton.textContent = info.type === 'depasse' ? 'Noter (ne compte pas)' : (info.type === 'victoire' ? 'Valider et gagner' : 'Valider');
-    if (rate) rate.disabled = fini;
+    if (rate) rate.disabled = !!bloque;
   }
 
   function touche(k) {
@@ -1019,7 +1221,7 @@
     var f = S.a.parId[m.joueur];
     var p = parseInt(S.saisie.valeur || '0', 10);
     if (!p || !f) return;
-    var info = R.apercu(f, S.a.regles, p, !!S.a.gagnant);
+    var info = R.apercu(f, S.a.regles, p, S.a.pause ? 'pause' : S.a.fini);
     if (!info.ok) { secouer(); return; }
     noter(m.joueur, p, info);
   }
@@ -1028,7 +1230,7 @@
     var m = S.modale;
     if (!m || m.type !== 'saisie') return;
     var f = S.a.parId[m.joueur];
-    if (!f || S.a.gagnant) return;
+    if (!f || S.a.fini || S.a.pause) return;
     noter(m.joueur, 0, R.apercu(f, S.a.regles, 0, false));
   }
 
@@ -1088,17 +1290,19 @@
     var stats = R.rang(f.rang) + ' · <span class="num">' + fmt(f.total) + '</span> points · ' + f.nbTours + (f.nbTours > 1 ? ' tours' : ' tour') +
       (f.meilleur ? ' · meilleur tour <span class="num">' + fmt(f.meilleur) + '</span>' : '');
     var actions = '';
+    var peutNoter = !a.fini && !a.pause;
+    var peutAnnuler = f.dernier && a.statut !== 'close';
     if (ECRAN) {
       actions = '<div class="actions-feuille">' +
-        (a.gagnant ? '' : '<button class="bouton bouton-principal" data-action="saisir-pour" data-joueur="' + esc(f.id) + '">Noter un tour</button>') +
-        (f.dernier ? '<button class="bouton bouton-secondaire" data-action="annuler-joueur" data-joueur="' + esc(f.id) + '">' + I.annuler + '<span>Annuler son dernier tour</span></button>' : '') +
+        (peutNoter ? '<button class="bouton bouton-principal" data-action="saisir-pour" data-joueur="' + esc(f.id) + '">Noter un tour</button>' : '') +
+        (peutAnnuler ? '<button class="bouton bouton-secondaire" data-action="annuler-joueur" data-joueur="' + esc(f.id) + '">' + I.annuler + '<span>Annuler son dernier tour</span></button>' : '') +
         '<button class="bouton bouton-secondaire" data-action="renommer" data-joueur="' + esc(f.id) + '">' + I.crayon + '<span>Renommer</span></button>' +
         '<button class="bouton bouton-danger" data-action="retirer" data-joueur="' + esc(f.id) + '">' + I.retirer + '<span>Retirer de la partie</span></button>' +
       '</div>';
     } else if (estMoi) {
       actions = '<div class="actions-feuille">' +
-        (a.gagnant ? '' : '<button class="bouton bouton-principal" data-action="saisir">Noter mon tour</button>') +
-        (f.dernier ? '<button class="bouton bouton-secondaire" data-action="annuler-dernier">' + I.annuler + '<span>Annuler mon dernier tour</span></button>' : '') +
+        (peutNoter ? '<button class="bouton bouton-principal" data-action="saisir">Noter mon tour</button>' : '') +
+        (peutAnnuler ? '<button class="bouton bouton-secondaire" data-action="annuler-dernier">' + I.annuler + '<span>Annuler mon dernier tour</span></button>' : '') +
         '<button class="bouton bouton-secondaire" data-action="renommer" data-joueur="' + esc(f.id) + '">' + I.crayon + '<span>Changer mon prénom</span></button>' +
       '</div>';
     }
@@ -1186,37 +1390,116 @@
   function modaleParametres() {
     var r = S.a.regles;
     var w = lireWifi() || { nom: '', mdp: '' };
-    var ent = [[0, 'Aucun'], [350, '350'], [500, '500'], [750, '750'], [1000, fmt(1000)]];
     var mini = [[0, 'Aucun'], [250, '250'], [300, '300'], [350, '350'], [400, '400'], [500, '500']];
-    return cadre(entete('Règles de la maison', 'Les changements s’appliquent tout de suite, pour tout le monde.') +
+    var entree = r.entree > 0 ? r.entree : R.DEFAUT.entree;
+    var wifi = !ECRAN ? '' :
+      '<form class="bloc-wifi" data-form="wifi" novalidate>' +
+        '<h3 class="titre-bloc">' + I.wifi + ' QR code du Wi‑Fi <span class="facultatif">facultatif</span></h3>' +
+        '<p class="note">Vos invités se connectent au Wi‑Fi en scannant un code. Le mot de passe reste enregistré sur cet écran uniquement.</p>' +
+        '<label class="etiquette-champ" for="wifi-nom">Nom du réseau</label>' +
+        '<input class="champ champ-petit" id="wifi-nom" autocomplete="off" autocapitalize="off" spellcheck="false" value="' + esc(w.nom) + '">' +
+        '<label class="etiquette-champ" for="wifi-mdp">Mot de passe</label>' +
+        '<input class="champ champ-petit" id="wifi-mdp" autocomplete="off" autocapitalize="off" spellcheck="false" value="' + esc(w.mdp) + '">' +
+        '<div class="boutons-ligne"><button class="bouton bouton-secondaire" type="submit">Afficher le QR du Wi‑Fi</button>' +
+        (lireWifi() ? '<button class="bouton bouton-texte" type="button" data-action="wifi-retirer">Retirer</button>' : '') + '</div>' +
+      '</form>';
+    return cadre(entete('Réglages de la partie', 'Les changements s’appliquent tout de suite, pour tout le monde.') +
       '<div class="reglages">' +
         '<div class="reglage"><p class="reglage-titre">Objectif</p>' + segments('objectif', r.objectif, [[5000, fmt(5000)], [10000, fmt(10000)]]) + '</div>' +
-        '<div class="reglage"><p class="reglage-titre">Pour entrer dans la partie, en un seul tour</p>' + segments('entree', r.entree, ent) + '</div>' +
+        '<label class="interrupteur"><input type="checkbox" id="regle-entree" data-cle="entree" data-oui="' + R.DEFAUT.entree + '" data-non="0"' + (r.entree > 0 ? ' checked' : '') + '>' +
+          '<span class="interrupteur-texte"><strong>' + fmt(entree) + ' points pour entrer dans la partie</strong><span class="note">Il faut les faire en un seul tour. Avant, on ne marque rien.</span></span></label>' +
         '<div class="reglage"><p class="reglage-titre">Minimum pour s’arrêter, à chaque tour</p>' + segments('minTour', r.minTour, mini) + '</div>' +
         '<label class="interrupteur"><input type="checkbox" id="regle-pile" data-cle="pile"' + (r.pile ? ' checked' : '') + '>' +
           '<span class="interrupteur-texte"><strong>Finir pile</strong><span class="note">Si on dépasse l’objectif, le tour ne compte pas.</span></span></label>' +
         '<label class="interrupteur"><input type="checkbox" id="regle-croix" data-cle="troisCroix"' + (r.troisCroix ? ' checked' : '') + '>' +
           '<span class="interrupteur-texte"><strong>3 ratés de suite, on redescend</strong><span class="note">À la 3e croix, retour au palier précédent.</span></span></label>' +
-        '<form class="bloc-wifi" data-form="wifi" novalidate>' +
-          '<h3 class="titre-bloc">' + I.wifi + ' QR code du Wi‑Fi <span class="facultatif">facultatif</span></h3>' +
-          '<p class="note">Vos invités se connectent au Wi‑Fi en scannant un code. Le mot de passe reste enregistré sur cet écran uniquement.</p>' +
-          '<label class="etiquette-champ" for="wifi-nom">Nom du réseau</label>' +
-          '<input class="champ champ-petit" id="wifi-nom" autocomplete="off" autocapitalize="off" spellcheck="false" value="' + esc(w.nom) + '">' +
-          '<label class="etiquette-champ" for="wifi-mdp">Mot de passe</label>' +
-          '<input class="champ champ-petit" id="wifi-mdp" autocomplete="off" autocapitalize="off" spellcheck="false" value="' + esc(w.mdp) + '">' +
-          '<div class="boutons-ligne"><button class="bouton bouton-secondaire" type="submit">Afficher le QR du Wi‑Fi</button>' +
-          (lireWifi() ? '<button class="bouton bouton-texte" type="button" data-action="wifi-retirer">Retirer</button>' : '') + '</div>' +
-        '</form>' +
+        wifi +
       '</div>', 'modale-parametres');
   }
 
   function modaleNouvelle() {
     var nb = S.a.joueurs.length;
-    return cadre(entete('Nouvelle partie', 'Les scores repartent à zéro pour tout le monde.') +
+    return cadre(entete('Nouvelle partie', 'Les scores repartent à zéro pour tout le monde. Le code de la partie ne change pas.') +
       '<div class="actions-feuille">' +
         (nb ? '<button class="bouton bouton-principal" data-action="rejouer" data-focus>' + I.rejouer + '<span>Rejouer avec les mêmes joueurs</span></button>' : '') +
-        '<button class="bouton bouton-secondaire" data-action="tout-effacer">Recommencer avec de nouveaux joueurs</button>' +
+        '<button class="bouton bouton-secondaire" data-action="tout-effacer">' + I.groupe + '<span>Recommencer avec de nouveaux joueurs</span></button>' +
         '<button class="bouton bouton-texte" data-action="fermer">Annuler</button>' +
+      '</div>', 'modale-courte');
+  }
+
+  // Menu de la partie : chaque action a son icône, son nom et une phrase d'explication.
+  function itemMenu(action, icone, nom, desc, classe, attributs) {
+    return '<button class="menu-item' + (classe ? ' ' + classe : '') + '" data-action="' + action + '"' + (attributs || '') + '>' +
+      '<span class="menu-icone">' + icone + '</span>' +
+      '<span class="menu-textes"><span class="menu-nom">' + nom + '</span><span class="menu-desc">' + desc + '</span></span></button>';
+  }
+  function lienMenu(href, icone, nom, desc) {
+    return '<a class="menu-item" href="' + esc(href) + '">' +
+      '<span class="menu-icone">' + icone + '</span>' +
+      '<span class="menu-textes"><span class="menu-nom">' + nom + '</span><span class="menu-desc">' + desc + '</span></span></a>';
+  }
+
+  function modaleMenu() {
+    var a = S.a;
+    var partie = [];
+    if (a.pause) partie.push(itemMenu('reprendre', I.lecture, 'Reprendre la partie', 'Tout le monde peut de nouveau noter ses points.', 'menu-accent'));
+    else if (!a.fini) partie.push(itemMenu('pause', I.pause, 'Mettre en pause', 'Les scores sont gardés : vous reprendrez plus tard.'));
+    if (!a.fini) partie.push(itemMenu('cloturer', I.drapeau, 'Clôturer la partie', 'Arrêter ici : le classement devient définitif.'));
+    partie.push(itemMenu('nouvelle', I.rejouer, 'Nouvelle partie', 'Les scores repartent à zéro.', a.fini ? 'menu-accent' : ''));
+    if (a.statut === 'close') partie.push(itemMenu('reprendre', I.lecture, 'Rouvrir la partie', 'Pour continuer à noter des points.'));
+    partie.push(itemMenu('effacer', I.poubelle, 'Effacer la partie', 'Elle disparaît pour tout le monde.', 'menu-danger'));
+
+    var plus = [];
+    if (ECRAN) {
+      plus.push(itemMenu('parametres', I.engrenage, 'Réglages de la partie', 'Objectif, points pour entrer, QR code du Wi‑Fi.'));
+      plus.push(itemMenu('jouer-ici', I.personne, 'Jouer sur cet appareil', 'Pour noter tes propres points ici.'));
+      if (PLEIN_ECRAN) plus.push(itemMenu('plein-ecran', I.agrandir, 'Plein écran', 'Pour une télé ou un ordinateur.'));
+      plus.push(itemMenu('regles', I.livre, 'Règles du jeu', 'Ce que rapporte chaque combinaison de dés.'));
+    } else {
+      plus.push(itemMenu('inviter', I.qr, 'Inviter des joueurs', 'Afficher le QR code de la partie.'));
+      plus.push(itemMenu('parametres', I.engrenage, 'Réglages de la partie', 'Objectif, points pour entrer…'));
+      plus.push(lienMenu(lienPartie(CODE, 'ecran'), I.ecran, 'Écran de partie', 'Le classement en grand, pour une tablette ou une télé.'));
+      if (moiValide()) plus.push(itemMenu('changer-joueur', I.changer, 'Changer de joueur', 'Si ce téléphone n’est pas le tien.'));
+      else plus.push(itemMenu('jouer', I.personne, 'Jouer aussi', 'Rejoindre la partie avec ton prénom.'));
+    }
+    plus.push(lienMenu(SITE, I.maison, 'Accueil', 'Créer ou reprendre une autre partie.'));
+
+    var nb = a.joueurs.length;
+    var etat = a.pause ? 'En pause' : (a.fini ? 'Terminée' : (a.commencee ? 'Tour ' + a.manche : 'Pas encore commencée'));
+    return cadre(entete('Partie <span class="code-mini">' + esc(CODE) + '</span>', esc(etat) + ' · ' + nb + (nb > 1 ? ' joueurs' : ' joueur')) +
+      '<div class="menu-partie">' +
+        '<h3 class="menu-titre">La partie</h3>' + partie.join('') +
+        '<h3 class="menu-titre">Plus</h3>' + plus.join('') +
+      '</div>', 'modale-menu');
+  }
+
+  function modaleCloturer() {
+    var a = S.a;
+    var tete = a.classement.filter(function (f) { return f.rang === 1 && f.total > 0; });
+    var info;
+    if (!tete.length) info = 'Personne n’a encore marqué de points.';
+    else if (tete.length === 1) info = '<strong>' + esc(tete[0].nom) + '</strong> est en tête avec <strong class="num">' + fmt(tete[0].total) + '</strong> points : la victoire sera pour ' + esc(tete[0].nom) + '.';
+    else info = 'Égalité en tête : ' + esc(listeNoms(tete.map(function (f) { return f.nom; }))) + '.';
+    return cadre(entete('Clôturer la partie ?', 'Le classement actuel devient définitif : plus personne ne pourra noter de points.') +
+      '<p class="texte">' + info + '</p>' +
+      '<div class="actions-feuille">' +
+        '<button class="bouton bouton-principal" data-action="confirmer-cloture">' + I.drapeau + '<span>Clôturer la partie</span></button>' +
+        '<button class="bouton bouton-texte" data-action="fermer" data-focus>Annuler</button>' +
+      '</div>', 'modale-courte');
+  }
+
+  function modaleEffacer(m) {
+    var code = m.code || CODE;
+    var surAccueil = !CODE;
+    var noms = [];
+    if (!surAccueil && S.a) noms = S.a.joueurs.map(function (f) { return f.nom; });
+    else if (S.resumes[code] && S.resumes[code].ok) noms = S.resumes[code].noms;
+    return cadre(entete('Effacer la partie <span class="code-mini">' + esc(code) + '</span> ?', 'Elle disparaîtra pour tous les joueurs, avec tous ses scores. C’est définitif.') +
+      (noms.length ? '<p class="texte">Joueurs : ' + esc(listeNoms(noms)) + '</p>' : '') +
+      '<div class="actions-feuille">' +
+        '<button class="bouton bouton-danger" data-action="confirmer-effacer" data-code="' + esc(code) + '">' + I.poubelle + '<span>Effacer la partie</span></button>' +
+        (surAccueil ? '<button class="bouton bouton-secondaire" data-action="oublier" data-code="' + esc(code) + '">Juste l’enlever de cette liste</button>' : '') +
+        '<button class="bouton bouton-texte" data-action="fermer" data-focus>Annuler</button>' +
       '</div>', 'modale-courte');
   }
 
@@ -1244,24 +1527,40 @@
       '</div>', 'modale-courte');
   }
 
+  /** Fin de partie : objectif atteint, ou partie clôturée (classement final). */
   function modaleVictoire() {
     var a = S.a;
-    var g = a.gagnant;
-    if (!g) return '';
+    if (!a.fini) return '';
+    var g = a.vainqueur;
     var r = a.regles;
     var podium = a.classement.slice(0, 3).map(function (f) {
       return '<li class="podium-ligne"><span class="rang num">' + f.rang + '</span>' + avatar(f) + '<span class="nom">' + esc(f.nom) + '</span><span class="total num">' + fmt(f.total) + '</span></li>';
     }).join('');
-    var estMoi = !ECRAN && g.id === S.moi;
+    var estMoi = g && !ECRAN && g.id === S.moi;
+    var titre, note, surtitre;
+    if (a.gagnant) {
+      surtitre = 'Partie terminée';
+      titre = estMoi ? 'Tu as gagné !' : esc(g.nom) + ' gagne !';
+      note = (r.pile ? fmt(r.objectif) + ' pile' : fmt(g.total) + ' points') + ' en ' + g.nbTours + (g.nbTours > 1 ? ' tours' : ' tour') +
+        ' · meilleur tour <span class="num">' + fmt(g.meilleur) + '</span>';
+    } else if (g) {
+      surtitre = 'Partie clôturée';
+      titre = estMoi ? 'Tu as gagné !' : esc(g.nom) + ' gagne !';
+      note = 'En tête avec <span class="num">' + fmt(g.total) + '</span> points au moment de la clôture.';
+    } else {
+      surtitre = 'Classement final';
+      titre = a.egalite ? 'Égalité en tête !' : 'Partie clôturée';
+      note = 'Le classement est définitif.';
+    }
     return cadre(
       '<div class="victoire">' + de(1, 'de-victoire') +
-        '<p class="surtitre">Partie terminée</p>' +
-        '<h2 id="titre-modale" class="titre-victoire">' + (estMoi ? 'Tu as gagné !' : esc(g.nom) + ' gagne !') + '</h2>' +
-        '<p class="note note-centree">' + (r.pile ? fmt(r.objectif) + ' pile' : fmt(g.total) + ' points') + ' en ' + g.nbTours + ' tours · meilleur tour <span class="num">' + fmt(g.meilleur) + '</span></p>' +
-        '<ol class="podium">' + podium + '</ol>' +
+        '<p class="surtitre">' + surtitre + '</p>' +
+        '<h2 id="titre-modale" class="titre-victoire">' + titre + '</h2>' +
+        '<p class="note note-centree">' + note + '</p>' +
+        (podium ? '<ol class="podium">' + podium + '</ol>' : '') +
         '<div class="actions-feuille">' +
           '<button class="bouton bouton-principal" data-action="fermer" data-focus>Voir les scores</button>' +
-          '<button class="bouton bouton-secondaire" data-action="nouvelle">' + I.rejouer + '<span>Rejouer</span></button>' +
+          '<button class="bouton bouton-secondaire" data-action="nouvelle">' + I.rejouer + '<span>Nouvelle partie</span></button>' +
         '</div>' +
       '</div>', 'modale-victoire', '<canvas class="confettis" id="confettis" aria-hidden="true"></canvas>');
   }
@@ -1478,9 +1777,11 @@
     'jouer-ici': function () { location.href = lienPartie(CODE); },
     regarder: function () { S.spectateur = true; ecrire(cleSpectateur(), '1'); rendre(); },
     jouer: function () {
+      if (S.modale) fermer();
       S.spectateur = false;
       ecrire(cleSpectateur(), null);
       rendre();
+      window.scrollTo(0, 0);
       var c = document.getElementById('champ-nom');
       if (c) c.focus();
     },
@@ -1491,7 +1792,13 @@
       var c = document.getElementById('champ-nom');
       if (c) { c.value = ''; c.focus(); }
     },
-    'changer-joueur': function () { S.moi = null; ecrire(cleMoi(), null); rendre(); window.scrollTo(0, 0); },
+    'changer-joueur': function () {
+      if (S.modale) fermer();
+      S.moi = null;
+      ecrire(cleMoi(), null);
+      rendre();
+      window.scrollTo(0, 0);
+    },
     saisir: function () { if (S.moi) ouvrir({ type: 'saisie', joueur: S.moi }); },
     'saisir-pour': function (el) { ouvrir({ type: 'saisie', joueur: el.getAttribute('data-joueur') }); },
     voir: function (el) { ouvrir({ type: 'joueur', joueur: el.getAttribute('data-joueur') }); },
@@ -1519,8 +1826,48 @@
     nouvelle: function () { ouvrir({ type: 'nouvelle' }); },
     rejouer: function () { envoyer('nouvellePartie', { garderJoueurs: true }).then(fermer).catch(erreurAction); },
     'tout-effacer': function () { envoyer('nouvellePartie', { garderJoueurs: false }).then(fermer).catch(erreurAction); },
-    'plein-ecran': pleinEcran,
-    'wifi-retirer': function () { ecrire(CLE_WIFI, null); fermer(); rendre(); toast('QR code du Wi‑Fi retiré.'); }
+    'plein-ecran': function () { fermer(); pleinEcran(); },
+    'wifi-retirer': function () { ecrire(CLE_WIFI, null); fermer(); rendre(); toast('QR code du Wi‑Fi retiré.'); },
+    menu: function () { ouvrir({ type: 'menu' }); },
+    pause: function () {
+      envoyer('pause').then(function () { if (S.modale && S.modale.type === 'menu') fermer(); }).catch(erreurAction);
+    },
+    reprendre: function () {
+      envoyer('reprise').then(function () { if (S.modale && S.modale.type === 'menu') fermer(); }).catch(erreurAction);
+    },
+    cloturer: function () { ouvrir({ type: 'cloturer' }); },
+    'confirmer-cloture': function () {
+      envoyer('cloture').then(function () { if (S.modale && S.modale.type === 'cloturer') fermer(); }).catch(erreurAction);
+    },
+    effacer: function () { ouvrir({ type: 'effacer' }); },
+    'effacer-recente': function (el) { ouvrir({ type: 'effacer', code: el.getAttribute('data-code') }); },
+    'confirmer-effacer': function (el) {
+      var code = el.getAttribute('data-code');
+      if (CODE && code === CODE) {
+        // Partie ouverte : tout le monde (ici compris) bascule sur « Partie effacée ».
+        envoyer('effacer').then(function () { if (S.modale && S.modale.type === 'effacer') fermer(); }).catch(erreurAction);
+        return;
+      }
+      el.disabled = true;
+      effacerDepuisAccueil(code).then(function () {
+        oublierRecente(code);
+        delete S.resumes[code];
+        fermer();
+        rendre();
+        toast('Partie ' + code + ' effacée.');
+      }).catch(function (e) {
+        el.disabled = false;
+        toast(e && e.code === 'delai' ? e.message : messageFirebase(e, true), { erreur: true, duree: 12000 });
+      });
+    },
+    oublier: function (el) {
+      var code = el.getAttribute('data-code');
+      oublierRecente(code);
+      delete S.resumes[code];
+      fermer();
+      rendre();
+      toast('Partie ' + code + ' enlevée de la liste.');
+    }
   };
 
   document.addEventListener('click', function (ev) {
@@ -1545,7 +1892,12 @@
 
   document.addEventListener('change', function (ev) {
     var el = ev.target;
-    if (el.matches('input[type="checkbox"][data-cle]')) changerRegle(el.getAttribute('data-cle'), el.checked);
+    if (!el.matches('input[type="checkbox"][data-cle]')) return;
+    // Interrupteur à valeur chiffrée (ex. 1 000 points pour entrer) ou simple oui/non.
+    var valeur = el.hasAttribute('data-oui')
+      ? Number(el.getAttribute(el.checked ? 'data-oui' : 'data-non'))
+      : el.checked;
+    changerRegle(el.getAttribute('data-cle'), valeur);
   });
 
   document.addEventListener('keydown', function (ev) {
@@ -1598,6 +1950,9 @@
       base = module.ouvrirBase(BASE);
       rendre();
       if (CODE) ecouter();
+      else {
+        try { chargerResumes(); } catch (e) { /* la liste reste affichée, sans détails */ }
+      }
     });
     chargement.catch(function () {
       S.fatal = {

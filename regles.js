@@ -12,7 +12,7 @@
 })(typeof self !== 'undefined' ? self : this, function () {
   'use strict';
 
-  var DEFAUT = { objectif: 10000, entree: 500, minTour: 250, pile: true, troisCroix: true };
+  var DEFAUT = { objectif: 10000, entree: 1000, minTour: 250, pile: true, troisCroix: true };
   var CLES_REGLES = { objectif: 1, entree: 1, minTour: 1, pile: 1, troisCroix: 1 };
   var MAX_JOUEURS = 20;
   var NB_COULEURS = 10;
@@ -59,22 +59,32 @@
   /**
    * Rejoue le journal d'une partie, tel qu'il est stocké dans Firebase
    * ({ cléChronologique: événement }), et reconstruit son état :
-   * { existe, numero, creee, regles, joueurs, tours, rejets }.
+   * { existe, numero, creee, derniere, statut, depuis, regles, joueurs, tours, rejets }.
+   * statut : 'en_cours', 'pause', 'close' (clôturée) ou 'effacee'.
    * Chaque appareil fait le même calcul dans le même ordre, donc tout le monde
    * voit exactement la même partie, même si deux joueurs écrivent en même temps.
    */
   function plier(evenements) {
     var cles = Object.keys(evenements || {}).sort();
-    var etat = { existe: false, numero: 0, creee: 0, regles: normaliser({}), joueurs: [], tours: [], rejets: {} };
+    var etat = {
+      existe: false, numero: 0, creee: 0, derniere: 0, statut: 'en_cours', depuis: 0,
+      regles: normaliser({}), joueurs: [], tours: [], rejets: {}
+    };
     var parJoueur = {};
 
     cles.forEach(function (cle) {
       var e = evenements[cle];
       if (!e || typeof e !== 'object') return;
       if (!etat.existe) {
-        if (e.type === 'creation') { etat.existe = true; etat.creee = Number(e.t) || 0; }
+        if (e.type === 'creation') {
+          etat.existe = true;
+          etat.creee = etat.derniere = etat.depuis = Number(e.t) || 0;
+        }
         return;
       }
+      if (etat.statut === 'effacee') return;   // une partie effacée l'est pour de bon
+      var quand = Number(e.t) || 0;
+      if (quand > etat.derniere) etat.derniere = quand;
       var nom, autre, i;
       switch (e.type) {
         case 'joueur':
@@ -103,7 +113,9 @@
           if (!parJoueur[e.j]) return;
           var pts = Math.round(Number(e.pts));
           if (!isFinite(pts) || pts < 0 || pts > 100000) return;
-          etat.tours.push({ id: cle, j: e.j, pts: pts, t: Number(e.t) || 0, par: typeof e.par === 'string' ? e.par : e.j });
+          var tour = { id: cle, j: e.j, pts: pts, t: quand, par: typeof e.par === 'string' ? e.par : e.j };
+          if (etat.statut === 'close') tour.horsJeu = true;   // noté après la clôture : ne compte pas
+          etat.tours.push(tour);
           return;
         case 'annuler':
           etat.tours = etat.tours.filter(function (t) { return t.id !== e.tour; });
@@ -133,12 +145,27 @@
         case 'rejouer':
           etat.numero++;
           etat.tours = [];
+          etat.statut = 'en_cours';
+          etat.depuis = quand;
           if (e.garder === false) {
             etat.joueurs = [];
             parJoueur = {};
           } else {
             etat.joueurs.forEach(function (j) { j.decalage = 0; });
           }
+          return;
+        case 'pause':
+          if (etat.statut === 'en_cours') { etat.statut = 'pause'; etat.depuis = quand; }
+          return;
+        case 'reprise':
+          if (etat.statut === 'pause' || etat.statut === 'close') { etat.statut = 'en_cours'; etat.depuis = quand; }
+          return;
+        case 'cloture':
+          if (etat.statut === 'en_cours' || etat.statut === 'pause') { etat.statut = 'close'; etat.depuis = quand; }
+          return;
+        case 'effacer':
+          etat.statut = 'effacee';
+          etat.depuis = quand;
           return;
       }
     });
@@ -199,8 +226,9 @@
       };
       f.nbTours++;
 
-      if (gagnant) {
+      if (gagnant || t.horsJeu) {
         l.type = 'apres-fin';
+        l.apresCloture = !gagnant;
       } else if (p === 0) {
         if (!f.ouvert) {
           l.type = 'rate-dehors';            // pas de croix avant d'être entré
@@ -271,12 +299,27 @@
       if (ligne) journal.push(ligne);
     }
 
+    // Partie clôturée avant la fin : le premier du classement l'emporte (s'il est seul en tête).
+    var statut = partie.statut || 'en_cours';
+    var vainqueur = gagnant;
+    var egalite = false;
+    if (!gagnant && statut === 'close' && classement.length && classement[0].total > 0) {
+      var tete = classement.filter(function (f) { return f.rang === 1; });
+      if (tete.length === 1) vainqueur = tete[0];
+      else egalite = true;
+    }
+
     return {
       regles: regles,
       joueurs: liste,
       classement: classement,
       parId: parId,
-      gagnant: gagnant,
+      gagnant: gagnant,          // a atteint l'objectif
+      vainqueur: vainqueur,      // gagnant, ou premier d'une partie clôturée
+      egalite: egalite,          // partie clôturée avec plusieurs premiers
+      statut: statut,
+      pause: statut === 'pause',
+      fini: !!gagnant || statut === 'close',
       manche: manche,
       commencee: tours.length > 0,
       journal: journal
@@ -285,11 +328,13 @@
 
   /**
    * Ce qui se passerait si l'on notait « points » pour ce joueur.
+   * finie : true (partie terminée) ou 'pause' (partie en pause).
    * Renvoie { ok, type, texte, total } ; ok = false bloque la validation.
    */
   function apercu(f, reglesBrutes, points, finie) {
     var regles = normaliser(reglesBrutes);
     points = Math.max(0, Math.round(Number(points) || 0));
+    if (finie === 'pause') return { ok: false, type: 'pause', texte: 'La partie est en pause.' };
     if (finie) return { ok: false, type: 'fin', texte: 'La partie est terminée.' };
     if (!f) return { ok: false, type: 'inconnu', texte: 'Joueur introuvable.' };
 
@@ -338,7 +383,7 @@
       case 'trop-peu-entree': return { coup: plus, note: 'pas assez pour entrer', classe: 'nul' };
       case 'trop-peu': return { coup: plus, note: 'sous le minimum', classe: 'nul' };
       case 'depasse': return { coup: plus, note: 'dépasse, ne compte pas', classe: 'nul' };
-      case 'apres-fin': return { coup: plus, note: 'après la fin', classe: 'nul' };
+      case 'apres-fin': return { coup: plus, note: l.apresCloture ? 'après la clôture, ne compte pas' : 'après la fin', classe: 'nul' };
       default: return { coup: plus, note: '', classe: 'points' };
     }
   }
