@@ -6,5 +6,5 @@
  *   https://compteur-10000-default-rtdb.europe-west1.firebasedatabase.app
  */
 window.COMPTEUR_10000 = {
-  base: ""
+  base: "https://test-jeux-1000-default-rtdb.europe-west1.firebasedatabase.app"
 };
