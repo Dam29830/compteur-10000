@@ -7,7 +7,7 @@
           "$id": {
             ".write": "!data.exists() && $code.length == 4 && $code.matches(/^[A-HJKMNP-Z2-9]+$/) && $id.length <= 32",
             ".validate": "newData.hasChildren(['type', 't'])",
-            "type": { ".validate": "newData.isString() && newData.val().matches(/^[a-z]{1,16}$/)" },
+            "type": { ".validate": "newData.isString() && newData.val().matches(/^[a-z]+$/) && newData.val().length <= 16" },
             "t": { ".validate": "newData.isNumber() && newData.val() <= now" },
             "nom": { ".validate": "newData.isString() && newData.val().length > 0 && newData.val().length <= 24" },
             "j": { ".validate": "newData.isString() && newData.val().length <= 32" },
