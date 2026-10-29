@@ -322,7 +322,7 @@
             if (rejet.code === 'nom_pris') return { erreur: erreur(rejet.nom + ' est déjà dans la partie.', 'nom_pris', { joueur: rejet.joueur }) };
             if (rejet.code === 'complet') return { erreur: erreur('La partie est complète.', 'complet') };
             return { erreur: erreur('Ce prénom n’est pas accepté.', 'nom_vide') };
-          }).then(ok, ko);
+          }, 10000).then(ok, ko);
         });
       }
       case 'tour':
@@ -1354,16 +1354,21 @@
     }
     var bouton = form.querySelector('[type="submit"]');
     bouton.disabled = true;
-    envoyer('rejoindre', { nom: nom })
-      .then(function (res) { devenir(res.joueur, true); })
-      .catch(function (e) {
-        var b = racine.querySelector('form[data-form="rejoindre"] [type="submit"]');
-        if (b) b.disabled = false;
-        if (e.code === 'nom_pris') S.erreurRejoindre = { texte: e.message + ' C’est toi ?', joueur: e.res.joueur };
-        else if (e.code) S.erreurRejoindre = { texte: e.message };
-        else { erreurAction(e); return; }
-        rendre();
-      });
+    function echec(e) {
+      var b = racine.querySelector('form[data-form="rejoindre"] [type="submit"]');
+      if (b) b.disabled = false;
+      if (e && e.code === 'nom_pris') S.erreurRejoindre = { texte: e.message + ' C’est toi ?', joueur: e.res.joueur };
+      else if (e && e.code) S.erreurRejoindre = { texte: e.message };
+      else S.erreurRejoindre = { texte: 'Problème technique : ' + ((e && e.message) || String(e)) + '. Recharge la page et réessaie.' };
+      rendre();
+    }
+    try {
+      envoyer('rejoindre', { nom: nom })
+        .then(function (res) { devenir(res.joueur, true); })
+        .catch(echec);
+    } catch (e) {
+      echec(e);
+    }
   }
 
   function soumettreCode(form) {
@@ -1546,8 +1551,37 @@
     else if (ev.key === 'Enter') { ev.preventDefault(); valider(); }
   });
 
-  document.addEventListener('visibilitychange', reveil);
+  // Safari coupe souvent la connexion en silence quand on change d'onglet ou que
+  // l'écran se met en veille : au retour, on la relance.
+  var cacheDepuis = 0;
+  document.addEventListener('visibilitychange', function () {
+    if (document.visibilityState === 'hidden') { cacheDepuis = Date.now(); return; }
+    if (db && cacheDepuis && Date.now() - cacheDepuis > 4000) {
+      try { db.goOffline(); db.goOnline(); } catch (e) { /* rien */ }
+    }
+    cacheDepuis = 0;
+    reveil();
+  });
+  // Page restaurée telle quelle par le navigateur (bouton retour) : on la recharge.
+  window.addEventListener('pageshow', function (ev) {
+    if (ev.persisted) location.reload();
+  });
   document.addEventListener('pointerdown', reveil, { once: true });
+
+  // Toute erreur imprévue s'affiche, pour pouvoir la signaler avec une capture d'écran.
+  var dernieresErreurs = {};
+  function signalerErreur(message) {
+    message = String(message || 'erreur inconnue').slice(0, 160);
+    if (/ResizeObserver|Script error/i.test(message)) return;
+    if (dernieresErreurs[message] && Date.now() - dernieresErreurs[message] < 10000) return;
+    dernieresErreurs[message] = Date.now();
+    toast('Problème technique : ' + message, { erreur: true, duree: 12000 });
+  }
+  window.addEventListener('error', function (ev) { signalerErreur(ev.message); });
+  window.addEventListener('unhandledrejection', function (ev) {
+    var r = ev.reason;
+    signalerErreur(r && (r.message || r.code) ? (r.message || r.code) : r);
+  });
 
   // --- Démarrage ----------------------------------------------------------------
 
