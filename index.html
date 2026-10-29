@@ -1,0 +1,36 @@
+<!doctype html>
+<html lang="fr">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>Compteur 10 000</title>
+<meta name="description" content="Le compteur de points du jeu de dés 10 000 : chacun note son score sur son téléphone, tout le monde suit en direct.">
+<meta name="theme-color" content="#F1F4F2" media="(prefers-color-scheme: light)">
+<meta name="theme-color" content="#0B1310" media="(prefers-color-scheme: dark)">
+<meta name="apple-mobile-web-app-title" content="10 000">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="mobile-web-app-capable" content="yes">
+<meta name="format-detection" content="telephone=no">
+<link rel="manifest" href="manifest.webmanifest">
+<link rel="icon" href="icone.svg" type="image/svg+xml">
+<link rel="apple-touch-icon" href="icone-180.png">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" media="print" onload="this.media='all'"
+      href="https://fonts.googleapis.com/css2?family=Atkinson+Hyperlegible+Next:wght@400;700&family=Gabarito:wght@600;700;800;900&display=swap">
+<link rel="stylesheet" href="app.css">
+</head>
+<body>
+<div id="app" class="app"><p class="chargement">Chargement du compteur…</p></div>
+<div id="modale"></div>
+<div id="toasts" class="toasts" aria-live="polite"></div>
+<div id="bandeau" class="bandeau" role="status" hidden></div>
+<noscript><p class="chargement">Active JavaScript pour utiliser le compteur.</p></noscript>
+<script src="https://www.gstatic.com/firebasejs/10.12.2/firebase-app-compat.js"></script>
+<script src="https://www.gstatic.com/firebasejs/10.12.2/firebase-database-compat.js"></script>
+<script src="config.js"></script>
+<script src="regles.js"></script>
+<script src="qrcode.js"></script>
+<script src="app.js"></script>
+</body>
+</html>

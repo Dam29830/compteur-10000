@@ -1,0 +1,16 @@
+{
+  "name": "Compteur 10 000",
+  "short_name": "10 000",
+  "description": "Le compteur de points du jeu de dés 10 000.",
+  "lang": "fr",
+  "start_url": "./",
+  "scope": "./",
+  "display": "standalone",
+  "background_color": "#F1F4F2",
+  "theme_color": "#0F5C4A",
+  "icons": [
+    { "src": "icone-192.png", "sizes": "192x192", "type": "image/png", "purpose": "any maskable" },
+    { "src": "icone-512.png", "sizes": "512x512", "type": "image/png", "purpose": "any maskable" },
+    { "src": "icone.svg", "sizes": "any", "type": "image/svg+xml" }
+  ]
+}
